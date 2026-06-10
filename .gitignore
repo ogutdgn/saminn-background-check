@@ -1,0 +1,46 @@
+# --- Python / backend ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# --- App data (PII — never commit) ---
+*.sqlite
+*.sqlite3
+*.db
+/data/
+cache/
+# Captured fixtures hold real public records incl. mugshots. Ignored by default;
+# only commit a sanitized fixture after clearing it with the lead.
+backend/tests/fixtures/**/*.html
+backend/tests/fixtures/**/*.json
+backend/tests/fixtures/**/*.jpg
+backend/tests/fixtures/**/*.png
+
+# --- Secrets / env ---
+.env
+.env.*
+!.env.example
+
+# --- Playwright ---
+playwright-report/
+test-results/
+.cache/ms-playwright/
+
+# --- OS / editor ---
+.DS_Store
+*.log
+.idea/
+.vscode/
