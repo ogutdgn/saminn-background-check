@@ -32,7 +32,7 @@ function titleCase(id: string): string {
 }
 
 // Sources whose detail includes a mugshot — auto-load it at search for the identity scan.
-const IMAGE_SOURCES = new Set(["tarrant"])
+const IMAGE_SOURCES = new Set(["tarrant", "hunt"])
 const AUTO_PHOTO_CAP = 12
 const CONCURRENCY = 3
 
