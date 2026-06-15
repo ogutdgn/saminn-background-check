@@ -15,8 +15,12 @@ from adapters.dallas import DallasAdapter
 FIX = Path(__file__).parent / "fixtures" / "dallas"
 RESULTS = (FIX / "search_lastname-smith_multi.html").read_bytes()
 NONE = (FIX / "search_no-results.html").read_bytes()
+PAGE1 = (FIX / "search_smith_page1.html").read_bytes()
+PAGE2 = (FIX / "search_smith_page2.html").read_bytes()
+PAGE3 = (FIX / "search_smith_page3.html").read_bytes()
 
 adapter = DallasAdapter()
+adapter.page_delay_s = 0  # no politeness sleeps in tests
 
 
 def _table(*rows: list[str]) -> str:
@@ -113,3 +117,53 @@ async def test_search_no_results_status():
         res = await adapter.search(SearchQuery(last="zzqxwv"), AdapterContext(client))
     assert res.status == AdapterStatus.NO_RESULTS
     assert res.records == []
+
+
+@pytest.mark.asyncio
+async def test_pagination_accumulates_across_pages_and_dedups():
+    # searchByName -> page1; /paging -> page2, page3, then page3 again (repeat = stop signal)
+    paging_pages = [PAGE2, PAGE3, PAGE3]
+    calls = {"paging": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p = request.url.path
+        if p.endswith("/searchByName"):
+            return httpx.Response(200, content=PAGE1)
+        if p.endswith("/paging"):
+            i = calls["paging"]
+            calls["paging"] += 1
+            return httpx.Response(200, content=paging_pages[min(i, len(paging_pages) - 1)])
+        return httpx.Response(200, content=b"ok")  # disclaimer + captcha
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="smith", max_results=100), AdapterContext(client))
+
+    assert res.status == AdapterStatus.OK
+    assert len(res.records) == 54                       # 54 distinct rows across 3 pages
+    assert {r.raw["page"] for r in res.records} == {1, 2, 3}
+    names = {r.name for r in res.records}
+    assert "SMITH KENNETH NOAH" in names                # page 1
+    assert "SMITH MELANIE ROSE" in names                # page 2
+    assert calls["paging"] == 3                         # stopped on the repeated page (dedup)
+
+
+@pytest.mark.asyncio
+async def test_pagination_stops_at_max_results_without_extra_fetches():
+    calls = {"paging": 0}
+
+    def handler(request):
+        p = request.url.path
+        if p.endswith("/searchByName"):
+            return httpx.Response(200, content=PAGE1)
+        if p.endswith("/paging"):
+            calls["paging"] += 1
+            return httpx.Response(200, content=PAGE2)
+        return httpx.Response(200, content=b"ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="smith", max_results=5), AdapterContext(client))
+
+    # page 1 alone has >= 5 distinct people -> stop before fetching any further page
+    assert res.status == AdapterStatus.OK
+    assert adapter._distinct_names(res.records) >= 5
+    assert calls["paging"] == 0

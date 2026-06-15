@@ -31,7 +31,7 @@ Stateful within a `JSESSIONID` session. Three steps:
 - **Result is one row per charge/case** (name repeats). We deliberately do **NOT** group
   rows into persons in the adapter — see "Known gaps" below.
 - **Pagination:** the results page has a `Page Down` control (`<form name="paging">`). Large
-  surnames span multiple pages.
+  surnames span multiple pages — followed via `POST /paging` (`which=down`); see "Known gaps".
 - **Detail page is session-stateful:** `GET defendant_detail?ln=<rownum>` where `ln` is the row's
   index *in the current search session* — not a stable ID. Must fetch in the same session, in order.
 - **Detail is a fixed-width mainframe text screen** (CICS-style, `&nbsp;`-padded), not clean table
@@ -71,9 +71,13 @@ Stateful within a `JSESSIONID` session. Three steps:
   either is "silently wrong". So we emit one record per case and defer person-level dedup to the
   client-side ranking layer (confidence + human review). Regression tests pin both cases.
 - **`total` is `None`** — Dallas reports no result count, and we don't yet page.
-- **🚧 Pagination is a Stage-4 (enable) blocker.** `search()` reads page 1 only; multi-page
-  surnames silently lose later pages. Need a real multi-page capture, then follow the `paging`
-  `Page Down` POST. The adapter stays **disabled** until this is handled.
+- **✅ Pagination solved.** `search()` follows `POST /paging` (body `which=down`, carrying the
+  JSESSIONID) page by page, accumulating with a dedup set keyed on (name, dob, case, charge,
+  disposition). Stops when a page adds no new rows (past the end / a repeat), `max_results`
+  distinct people are reached, or `max_pages` (15) is hit; `page_delay_s=0.2` politeness pause
+  between pages. Verified against a live 3-page SMITH capture (54 distinct rows; page 2 had 0
+  case overlap with page 1). Fixtures: `search_smith_page{1,2,3}.html`. (Technique confirmed
+  against the prior demo's `lib/adapters/dallas.ts` — same `which=down` form.)
 
 **Verified:** `lastName=SMITH` (Defendant) → multi-row results w/ dispositions; nonsense surname →
 "No records were found using the search criteria provided"; detail page pulled for row 01.

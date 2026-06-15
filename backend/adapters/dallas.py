@@ -16,6 +16,8 @@ kept in `raw["dob"]`. We search as Defendant (nameType=DF) → `matched_on = NAM
 """
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 from selectolax.parser import HTMLParser
 
@@ -42,6 +44,9 @@ class DallasAdapter(Adapter):
     transport = "http"
     tier = 2
 
+    max_pages = 15        # safety cap on the paging loop (bounded, human-paced)
+    page_delay_s = 0.2    # politeness pause between page fetches
+
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
         start = ctx.now_ms()
         try:
@@ -66,12 +71,39 @@ class DallasAdapter(Adapter):
 
             if self._is_no_results(html):
                 return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
-            records = self._parse_results(html)
+
+            # Follow pagination: POST /paging (which=down) carrying the session cookie.
+            # Each page re-numbers rows 01.. and returns a fresh set, so we accumulate with
+            # a dedup set and stop when a page adds NO new rows (past the end / a repeat),
+            # we have enough distinct people (max_results), or we hit the safety cap.
+            records: list[InmateRecord] = []
+            seen: set[tuple] = set()
+            for page in range(1, self.max_pages + 1):
+                added = 0
+                for rec in self._parse_results(html):
+                    rec.raw["page"] = page  # detail_ln is page- and session-relative
+                    key = self._row_key(rec)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    records.append(rec)
+                    added += 1
+                if added == 0:
+                    break  # nothing new on this page -> we're past the last page
+                if self._distinct_names(records) >= query.max_results:
+                    break
+                if self.page_delay_s:
+                    await asyncio.sleep(self.page_delay_s)
+                nxt = await ctx.http.post(f"{_BASE}/paging", data={"which": "down"}, timeout=ctx.timeout_s)
+                nxt.raise_for_status()
+                html = nxt.text
+                if "defendant_detail" not in html:
+                    break  # no result links -> no further pages
+
             if not records:
-                # not the known "no records" page, yet nothing parsed -> fail loud
+                # had a result table but parsed nothing -> fail loud
                 raise ValueError("results page had no parseable rows and no no-records marker")
-            # total is None: Dallas reports no count, and results may span pages we don't
-            # yet follow (Stage-4 blocker) — so we never claim len(records) is the total.
+            # total stays None: Dallas reports no count, and we cap at max_results.
             return self._envelope(AdapterStatus.OK, records, None, start)
         except httpx.TimeoutException as e:
             return self._fail(AdapterStatus.TIMEOUT, start, str(e))
@@ -148,6 +180,22 @@ class DallasAdapter(Adapter):
         if not rs or len(rs) < 2:
             return None
         return {"M": "M", "F": "F"}.get(rs[1].upper(), "U")
+
+    @staticmethod
+    def _row_key(rec: InmateRecord) -> tuple:
+        """Identity of one case-row, for dedup across pages."""
+        c = rec.charges[0] if rec.charges else None
+        return (
+            rec.name,
+            rec.raw.get("dob"),
+            c.case_no if c else None,
+            c.offense if c else None,
+            c.disposition if c else None,
+        )
+
+    @staticmethod
+    def _distinct_names(records: list[InmateRecord]) -> int:
+        return len({r.name for r in records})
 
     def _envelope(
         self, status: AdapterStatus, records: list[InmateRecord], total: int | None, start_ms: int
