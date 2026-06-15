@@ -32,21 +32,23 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 1: Scaffold (in progress)
+## CURRENT PHASE → Phase 1: Scaffold ✅ DONE → Phase 2: Sources (next)
 > **Phase 0 is DONE.** Deployment, stack, and architecture decided; sources reconned + tiered;
 > the add-a-source pipeline + plan-tracking in place. (2026-06-10 entry in [last-point.md](last-point.md).)
 >
-> **Phase 1 (Scaffold) — progress (2026-06-14):**
+> **Phase 1 (Scaffold) — COMPLETE (2026-06-14). The vertical slice runs end to end.**
 > - [x] Backend project setup (`.venv`, `pyproject.toml`, `pytest`).
 > - [x] **The contract:** `backend/adapters/base.py` (InmateRecord/AdapterResult/Adapter + structured `SearchQuery`) + `registry.py`. **Locked v1 — validated against two real sources.**
-> - [x] **First two adapters early** (we pulled raw first): `tarrant.py` + `dallas.py`, fixture-tested, adversarially verified, registered **disabled**. (Stage 2–3.)
+> - [x] **First two adapters** (we pulled raw first): `tarrant.py` + `dallas.py`, fixture-tested, adversarially verified. Dallas pagination solved. **Enabled (Stage 4).**
 > - [x] **Core engine:** `orchestrator.py` (fan-out + completion-order stream + timeout/isolation) + `audit.py` (append-only SQLite). (`browser.py`, `cache.py` deferred until a source needs them.)
-> - [ ] **API:** `backend/web/app.py` with `POST /api/search` SSE.
-> - [ ] **Frontend:** Vite + TS scaffold, SSE client, one source card; types from OpenAPI.
-> - [ ] **Vertical slice:** search → orchestrator → SSE → card, end-to-end (enable Tarrant + Dallas).
+> - [x] **API:** `backend/web/app.py` — `POST /api/search` SSE + `/api/health`.
+> - [x] **Frontend:** Vite + React + TS + Tailwind + shadcn/ui; SSE-over-fetch client; one card per source; types generated from OpenAPI.
+> - [x] **Vertical slice verified live in-browser:** SMITH → Tarrant (47 recs, 403 ms) then Dallas (54 recs, 3 pages) streamed in completion order.
 >
-> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`. (Dallas
-> pagination ✅ solved.) Team-size resolved: **solo** (no team-division doc).
+> **Phase 2 (Sources) next:** Hunt · ODCR · Denton (HTTP tier) → Collin (build `browser.py`) → Fannin (stretch), each via the add-a-source pipeline.
+>
+> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`; tune Dallas
+> paging latency (~19 s on huge surnames). Team-size resolved: **solo** (no team-division doc).
 
 ## Daily work log
 
@@ -58,8 +60,10 @@
 - [x] Carried over from 06-10: team size **resolved (solo)** → team-division doc dropped; foundation + plan docs committed.
 - [x] **Core engine:** orchestrator (fan-out, completion-order streaming, hard timeout, failure isolation) + append-only audit log. Stub-adapter tests.
 - [x] **Dallas pagination solved** — `POST /paging` (`which=down`) + dedup, verified live (3-page SMITH) and against the prior demo's `dallas.ts`. **28 tests pass.**
-- [ ] API SSE (`/api/search`) → frontend card → vertical slice (enable Tarrant + Dallas).
-- [ ] Sync `ARCHITECTURE.md` `SearchQuery`.
+- [x] **API:** FastAPI `POST /api/search` SSE + `/api/health`; audit wired; enabled Tarrant + Dallas (Stage 4). 31 tests.
+- [x] **Frontend:** Vite + React + TS + Tailwind + shadcn/ui; SSE-over-fetch client (CRLF-tolerant); SourceCard; OpenAPI-generated types.
+- [x] **Vertical slice verified live in-browser** (SMITH → Tarrant 47 / Dallas 54 streamed in order). **Phase 1 complete.**
+- [ ] Sync `ARCHITECTURE.md` `SearchQuery`; tune Dallas paging latency. Then Phase 2 sources.
 
 ### 2026-06-10
 - [x] Reviewed the existing demo (Next.js + Python versions) and extracted the reusable **knowledge** (source tiers, per-site gotchas) rather than the code.

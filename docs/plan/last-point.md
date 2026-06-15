@@ -7,6 +7,31 @@
 
 ---
 
+## 2026-06-14 (vertical slice) — Phase 1 COMPLETE, runs end to end
+
+- **Branch:** `source/tarrant` (all Phase-1 scaffold work; not yet merged to `main`).
+- **Phase:** **Phase 1 (Scaffold) — ✅ DONE. Phase 2 (Sources) next.**
+- **State summary:** The vertical slice is real: type a name in the browser → both sources'
+  cards stream in live. Backend spine + UI both built, tested, and verified end to end.
+- **Done (this stretch):**
+  - **API** (`backend/web/app.py`): FastAPI `POST /api/search` (SSE, one event per source via
+    the orchestrator) + `GET /api/health`; audit wired; **Tarrant + Dallas enabled (Stage 4)**.
+  - **Frontend** (`frontend/`): Vite + React + TS + Tailwind + **shadcn/ui**; an SSE-over-fetch
+    client (`src/api/search.ts`), `SourceCard`, search box; **types generated from the backend
+    OpenAPI** so they can't drift. `vite.config` proxies `/api` → `:8099`.
+  - **Verified live in a real browser:** searching SMITH streamed **Tarrant (47 recs, 403 ms)**
+    first, then **Dallas (54 recs across 3 paginated pages)** — completion-order streaming,
+    contract rendering, charges/dispositions, and per-case records all confirmed on screen.
+  - Fixed an SSE CRLF-parsing bug (sse-starlette uses `\r\n`). **31 backend tests pass.**
+- **Next (Phase 2):** sources one at a time via the pipeline — Hunt, ODCR, Denton (HTTP) →
+  Collin (build the shared `browser.py` Playwright manager) → Fannin (stretch).
+- **Loose ends:** sync `ARCHITECTURE.md` to the structured `SearchQuery`; tune Dallas paging
+  latency (~19 s on huge surnames — lower `page_delay_s`/`max_results` or hydrate lazily).
+- **Run it:** backend `uvicorn web.app:app --app-dir backend --port 8099`; frontend `cd frontend
+  && npm run dev` (proxies to the backend).
+
+---
+
 ## 2026-06-14 (cont.) — Engine built + Dallas pagination solved
 
 - **Branch:** `source/tarrant` (all Phase-1 scaffold work; not yet merged to `main`).
