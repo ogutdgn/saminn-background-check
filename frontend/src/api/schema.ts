@@ -43,6 +43,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/record/{source}/{record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Record Detail
+         * @description Fetch one record's full detail on demand (e.g. Tarrant CID -> mugshot + charges).
+         *
+         *     Drives both the per-card "More details" expand and the search-time profile photo for
+         *     image sources. The frontend merges this onto the list record it already has.
+         */
+        get: operations["record_detail_api_record__source___record_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -232,6 +255,38 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdapterResult"];
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_detail_api_record__source___record_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: string;
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InmateRecord"];
                 };
             };
             /** @description Validation Error */

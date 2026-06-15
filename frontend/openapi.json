@@ -82,6 +82,55 @@
           }
         }
       }
+    },
+    "/api/record/{source}/{record_id}": {
+      "get": {
+        "summary": "Record Detail",
+        "description": "Fetch one record's full detail on demand (e.g. Tarrant CID -> mugshot + charges).\n\nDrives both the per-card \"More details\" expand and the search-time profile photo for\nimage sources. The frontend merges this onto the list record it already has.",
+        "operationId": "record_detail_api_record__source___record_id__get",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Source"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InmateRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
