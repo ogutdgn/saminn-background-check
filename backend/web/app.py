@@ -11,14 +11,15 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+import httpx
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from adapters import registry
-from adapters.base import Adapter, AdapterResult, SearchQuery
+from adapters.base import Adapter, AdapterContext, AdapterResult, InmateRecord, SearchQuery
 from core.audit import AuditLog
-from core.orchestrator import run_search
+from core.orchestrator import _USER_AGENT, run_search
 
 _DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "audit.sqlite"
 
@@ -86,3 +87,26 @@ async def search(
         yield {"event": "done", "data": "{}"}
 
     return EventSourceResponse(event_stream())
+
+
+@app.get("/api/record/{source}/{record_id}", response_model=InmateRecord)
+async def record_detail(
+    source: str,
+    record_id: str,
+    adapters: list[Adapter] = Depends(get_adapters),
+) -> InmateRecord:
+    """Fetch one record's full detail on demand (e.g. Tarrant CID -> mugshot + charges).
+
+    Drives both the per-card "More details" expand and the search-time profile photo for
+    image sources. The frontend merges this onto the list record it already has.
+    """
+    adapter = next((a for a in adapters if a.id == source), None)
+    if adapter is None:
+        raise HTTPException(status_code=404, detail=f"unknown or disabled source: {source}")
+    async with httpx.AsyncClient(
+        headers={"User-Agent": _USER_AGENT}, follow_redirects=True, timeout=httpx.Timeout(20.0)
+    ) as client:
+        record = await adapter.fetch_detail(record_id, AdapterContext(client, timeout_s=20.0))
+    if record is None:
+        raise HTTPException(status_code=404, detail="no detail available for this record")
+    return record

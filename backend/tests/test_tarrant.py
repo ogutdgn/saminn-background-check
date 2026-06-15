@@ -98,3 +98,35 @@ async def test_search_converts_transport_error_to_error_status():
     # never raises out of search() — failure becomes an ERROR result
     assert res.status == AdapterStatus.ERROR
     assert res.error and "boom" in res.error
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_returns_mugshot_and_charges():
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "GetActiveBookings" in url:
+            return httpx.Response(200, content=BOOKINGS)
+        if "Details" in url:
+            return httpx.Response(200, content=DETAIL)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("1042590", AdapterContext(client))
+
+    assert rec is not None
+    assert rec.source == "tarrant"
+    assert rec.source_url.endswith("CID=1042590")
+    assert rec.photo_base64 and rec.photo_base64.startswith("/9j/")   # mugshot hydrated
+    assert len(rec.charges) == 2
+    assert rec.charges[0].offense == "CRIMINAL TRESPASS"
+    assert rec.booking_date == "5/15/2026"
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_returns_none_on_error():
+    def handler(request):
+        raise httpx.ConnectError("down")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("1042590", AdapterContext(client))
+    assert rec is None   # never raises — returns None on failure

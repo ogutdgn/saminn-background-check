@@ -168,3 +168,12 @@ class Adapter(ABC):
     @abstractmethod
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
         ...
+
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Fetch ONE record's full detail by its source id (e.g. Tarrant CID) — the heavy
+        per-record pull (mugshot, full charges) done lazily on demand, not for every search row.
+
+        Returns the hydrated record, or None if this source has no extra detail to fetch.
+        Default: unsupported. Like `search`, this should not raise — return None on failure.
+        """
+        return None

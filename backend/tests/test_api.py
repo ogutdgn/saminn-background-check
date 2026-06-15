@@ -99,3 +99,28 @@ async def test_search_validates_body():
     async with await _client() as ac:
         r = await ac.post("/api/search", json={"first": "john"})
     assert r.status_code == 422
+
+
+class DetailStub(ApiStub):
+    async def fetch_detail(self, record_id, ctx):
+        return InmateRecord(source=self.id, name="", photo_base64="/9j/abc", raw={"CID": record_id})
+
+
+@pytest.mark.asyncio
+async def test_record_detail_returns_hydrated_record():
+    app.dependency_overrides[get_adapters] = lambda: [DetailStub("tarrant")]
+    async with await _client() as ac:
+        r = await ac.get("/api/record/tarrant/1042590")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "tarrant"
+    assert body["photo_base64"] == "/9j/abc"
+    assert body["raw"]["CID"] == "1042590"
+
+
+@pytest.mark.asyncio
+async def test_record_detail_unknown_source_404():
+    app.dependency_overrides[get_adapters] = lambda: []
+    async with await _client() as ac:
+        r = await ac.get("/api/record/nope/123")
+    assert r.status_code == 404

@@ -103,6 +103,22 @@ class TarrantAdapter(Adapter):
         detail = await ctx.http.get(self.DETAIL_URL, params={"CID": cid}, timeout=ctx.timeout_s)
         record.photo_base64 = self._extract_mugshot(detail.content)
 
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Detail-by-CID: mugshot + full charges for one inmate. The frontend merges this
+        onto the list record it already has (name comes from the list), so `name` is left
+        empty here. Never raises — returns None on failure."""
+        try:
+            rec = InmateRecord(
+                source=self.id,
+                name="",
+                source_url=f"{self.DETAIL_URL}?CID={record_id}",
+                raw={"CID": record_id},
+            )
+            await self.hydrate(rec, ctx)
+            return rec
+        except Exception:
+            return None
+
     # -- pure parsers (fixture-tested) ------------------------------------
 
     def _parse_list(self, content: bytes | str) -> list[InmateRecord]:
