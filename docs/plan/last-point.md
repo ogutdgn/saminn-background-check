@@ -7,6 +7,32 @@
 
 ---
 
+## 2026-06-15 — Detail UX complete + architecture review + doc cleanup
+
+- **Branch:** `source/tarrant` (still the everything-branch; not yet merged to `main`).
+- **Phase:** **Phase 1 ✅ (core; browser/cache deferred by design). Phase 2 in progress — 2 of ~6 sources live.**
+- **State summary:** Both live sources now have full detail UX (photos, popups, case sheet).
+  Did an architecture review and a doc cleanup.
+- **Done this session:**
+  - **Dallas "More details"**: `fetch_detail` via **Search-by-Case** (stable case#, no session-relative
+    link) → full court case sheet (richer than the list: full name, unmasked DOB).
+  - **Detail popup (Dialog)** for every record: Tarrant = big mugshot + charges; Dallas =
+    document-styled case sheet (Courier, fixed-width columns, header bar). Wider/taller popup.
+  - **UI polish**: "No image" placeholders, search + popup loading spinners.
+  - **Robustness**: `AdapterResult.partial` + Dallas time-budgeted paging (no timeout→0); detail
+    fetch timeout + Retry; 60s dev-proxy timeout (Dallas detail is ~5–15s server-side). **38 tests pass.**
+  - **Cleanup**: synced `ARCHITECTURE.md` contract spec to the evolved contract; clarified the
+    Phase-1 deferral of `browser.py`/`cache.py` in the plan.
+- **Architecture review (honest):** no *core* decision changed — adapter/contract/orchestrator,
+  SSE, on-prem, SQLite, isolation, responsible-use all intact. The **contract evolved additively**
+  (structured `SearchQuery`, `partial`, `fetch_detail`) — the planned "draft→validate→revise" path.
+  Debt: small frontend `IMAGE_SOURCES` hardcode; branch hygiene (everything on `source/tarrant`,
+  nothing merged to `main`); `browser.py`/`cache.py` still deferred.
+- **Next:** pick the next **Phase-2 source** (ODCR = most coverage; Hunt = quickest), via the
+  add-a-source pipeline. Optional first: merge the branch to `main`; tune Dallas latency.
+
+---
+
 ## 2026-06-14 (detail + photos) — on-demand record detail + profile mugshots
 
 - **Branch:** `source/tarrant`. **Phase 1 done + hardening/UX on the two live sources.**

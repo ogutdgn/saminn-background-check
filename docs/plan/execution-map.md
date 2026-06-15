@@ -32,25 +32,31 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 1: Scaffold ✅ DONE → Phase 2: Sources (next)
-> **Phase 0 is DONE.** Deployment, stack, and architecture decided; sources reconned + tiered;
-> the add-a-source pipeline + plan-tracking in place. (2026-06-10 entry in [last-point.md](last-point.md).)
+## CURRENT PHASE → Phase 2: Sources (in progress) — 2 of ~6 live
+> **Phase 0 ✅** and **Phase 1 ✅** (the vertical slice runs end to end). Dated entries in [last-point.md](last-point.md).
 >
-> **Phase 1 (Scaffold) — COMPLETE (2026-06-14). The vertical slice runs end to end.**
-> - [x] Backend project setup (`.venv`, `pyproject.toml`, `pytest`).
-> - [x] **The contract:** `backend/adapters/base.py` (InmateRecord/AdapterResult/Adapter + structured `SearchQuery`) + `registry.py`. **Locked v1 — validated against two real sources.**
-> - [x] **First two adapters** (we pulled raw first): `tarrant.py` + `dallas.py`, fixture-tested, adversarially verified. Dallas pagination solved. **Enabled (Stage 4).**
-> - [x] **Core engine:** `orchestrator.py` (fan-out + completion-order stream + timeout/isolation) + `audit.py` (append-only SQLite). (`browser.py`, `cache.py` deferred until a source needs them.)
-> - [x] **API:** `backend/web/app.py` — `POST /api/search` SSE + `/api/health`.
-> - [x] **Frontend:** Vite + React + TS + Tailwind + shadcn/ui; SSE-over-fetch client; one card per source; types generated from OpenAPI.
-> - [x] **Vertical slice verified live in-browser:** SMITH → Tarrant (47 recs, 403 ms) then Dallas (54 recs, 3 pages) streamed in completion order.
+> **Phase 1 (Scaffold) — core COMPLETE; 2 infra pieces deferred *by design* (not unfinished):**
+> - [x] Backend setup · **contract** (`base.py`, structured `SearchQuery`) + registry · **orchestrator** (fan-out/stream/timeout/isolation) · **audit** (append-only SQLite) · **API** (`/api/search` SSE, `/api/health`, `/api/record/{source}/{id}`) · **frontend** (React/Tailwind/shadcn, OpenAPI-typed) · live vertical slice.
+> - [ ] `browser.py` (Playwright manager) — **deferred to Collin** (build when the first browser source lands).
+> - [ ] `cache.py` (SQLite TTL) — **deferred to Phase 4** (a volume optimization; unneeded at current volume).
 >
-> **Phase 2 (Sources) next:** Hunt · ODCR · Denton (HTTP tier) → Collin (build `browser.py`) → Fannin (stretch), each via the add-a-source pipeline.
+> **Phase 2 (Sources) — in progress:**
+> - [x] Tarrant (T1, http) · [x] Dallas (T2, http) — both live, with photos / case-sheet detail-on-demand.
+> - [ ] Hunt (T2) · [ ] ODCR (T2, OK statewide) · [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
 >
-> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`; tune Dallas
-> paging latency (~19 s on huge surnames). Team-size resolved: **solo** (no team-division doc).
+> **Loose ends:** [x] `ARCHITECTURE.md` contract synced (2026-06-15). Open: tune Dallas paging latency
+> (~18 s); tighten the Dallas name/DOB parser; replace the frontend `IMAGE_SOURCES` hardcode with a
+> backend photo-capability flag; checkpoint-merge the branch to `main`. Team: **solo**.
 
 ## Daily work log
+
+### 2026-06-15
+- [x] **On-demand record detail:** `GET /api/record/{source}/{id}` + optional `Adapter.fetch_detail`. Tarrant: CID → mugshot + charges. **Dallas: Search-by-Case (stable case#) → full court case sheet** (richer than the list — full name, unmasked DOB).
+- [x] **Frontend detail UX:** profile photos auto-loaded at search for image sources (capped/bounded); every record has **"More details" → popup (Dialog)**: Tarrant = big mugshot + charges, Dallas = document-styled case sheet (Courier, fixed-width columns, header bar).
+- [x] **UI polish:** "No image" placeholders, search + popup **loading spinners**, wider/taller popup so the case sheet fits.
+- [x] **Robustness:** `AdapterResult.partial` + Dallas time-budgeted pagination (no more timeout→0); detail fetch timeout + Retry; 60s dev-proxy timeout (Dallas detail is ~5–15s server-side). **38 tests pass.**
+- [x] **Cleanup:** synced `ARCHITECTURE.md` contract spec (structured `SearchQuery`, `partial`, `fetch_detail`); clarified Phase-1 deferral (browser/cache).
+- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · `IMAGE_SOURCES`→backend flag · merge branch to `main` · **next source (ODCR/Hunt)**.
 
 ### 2026-06-14
 - [x] Stage-1 raw pulls (live): **Tarrant** (JSON jTable, 3-call flow + base64 mugshot) and **Dallas** (HTML court search, disclaimer gate, dispositions, no mugshots). Fixtures + spike notes committed.
