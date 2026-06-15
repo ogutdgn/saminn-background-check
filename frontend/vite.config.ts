@@ -8,6 +8,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: { "@": path.resolve(import.meta.dirname, "./src") },
+    // ensure a single React instance (dev dep-optimization can otherwise double it)
+    dedupe: ["react", "react-dom"],
   },
   server: {
     port: process.env.PORT ? Number(process.env.PORT) : 5173,
