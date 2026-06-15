@@ -17,6 +17,7 @@ kept in `raw["dob"]`. We search as Defendant (nameType=DF) → `matched_on = NAM
 from __future__ import annotations
 
 import asyncio
+import re
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -123,6 +124,35 @@ class DallasAdapter(Adapter):
         except Exception as e:  # never raise out of search()
             return self._fail(AdapterStatus.ERROR, start, str(e))
 
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Detail-by-case-number via Search-by-Case (the case number is stable, unlike the
+        session-relative defendant_detail link). Returns the full case sheet — which is richer
+        than the list row: full name, *unmasked* DOB, race, offense, court/hearing data. Never
+        raises — returns None on failure."""
+        try:
+            await ctx.http.get(f"{_BASE}/", timeout=ctx.timeout_s)
+            await ctx.http.post(f"{_BASE}/captcha", data={"submit": "Continue"}, timeout=ctx.timeout_s)
+            resp = await ctx.http.post(
+                f"{_BASE}/searchByCase",
+                data={"caseNumber": record_id, "searchbycasenumber": "Search By Case Number"},
+                timeout=ctx.timeout_s,
+            )
+            resp.raise_for_status()
+            d = self._parse_case_detail(resp.text)
+            return InmateRecord(
+                source=self.id,
+                name=d.get("name") or "",
+                year_of_birth=d.get("year"),
+                sex=d.get("sex"),
+                matched_on=[MatchInfo(type=MatchType.NAME)],
+                charges=[
+                    Charge(offense=d.get("offense"), case_no=record_id, extra={"race": d.get("race")})
+                ],
+                raw={"case_no": record_id, "dob": d.get("dob"), "detail_text": d.get("sheet")},
+            )
+        except Exception:
+            return None
+
     # -- pure parsers (fixture-tested) ------------------------------------
 
     def _parse_results(self, html: str) -> list[InmateRecord]:
@@ -166,6 +196,7 @@ class DallasAdapter(Adapter):
                     raw={
                         "rs": rs or None,
                         "dob": dob or None,
+                        "detail_id": case_bond or None,  # stable case number -> fetch_detail
                         "detail_ln": link.attributes.get("href") if link else None,
                         "row": v,
                     },
@@ -176,6 +207,29 @@ class DallasAdapter(Adapter):
     @staticmethod
     def _is_no_results(html: str) -> bool:
         return _NO_RESULTS_MARKER in html
+
+    def _parse_case_detail(self, html: str) -> dict:
+        """Readable lines + key fields from the mainframe case sheet (Search-by-Case)."""
+        tree = HTMLParser(html)
+        container = tree.css_first(".container") or tree.body
+        text = container.text(separator="\n") if container else ""
+        lines = [ln.replace("\xa0", " ").rstrip() for ln in text.split("\n") if ln.strip()]
+        sheet = "\n".join(lines)
+
+        out: dict = {"sheet": sheet, "name": None, "year": None, "sex": None, "race": None,
+                     "dob": None, "offense": None}
+        m = re.search(r"DEF NAME ([A-Z][A-Z_ ]+?)\s+RACE (\w)\s+SEX (\w)\s+DOB (\d{8})", sheet)
+        if m:
+            out["name"] = re.sub(r"\s+", " ", m.group(1).replace("_", " ")).strip()
+            out["race"] = m.group(2)
+            out["sex"] = {"M": "M", "F": "F"}.get(m.group(3).upper(), "U")
+            dob = m.group(4)  # MMDDYYYY (unmasked here, unlike the list)
+            out["dob"] = dob
+            out["year"] = dob[4:8] if dob[4:8] != "0000" else None
+        mo = re.search(r"\bOFF ([A-Z0-9/ _]+?)\s+DT ", sheet)
+        if mo:
+            out["offense"] = re.sub(r"\s+", " ", mo.group(1).replace("_", " ")).strip()
+        return out
 
     # -- helpers -----------------------------------------------------------
 

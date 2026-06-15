@@ -18,6 +18,7 @@ NONE = (FIX / "search_no-results.html").read_bytes()
 PAGE1 = (FIX / "search_smith_page1.html").read_bytes()
 PAGE2 = (FIX / "search_smith_page2.html").read_bytes()
 PAGE3 = (FIX / "search_smith_page3.html").read_bytes()
+CASE_DETAIL = (FIX / "case_detail_MC13A6231.html").read_bytes()
 
 adapter = DallasAdapter()
 adapter.page_delay_s = 0  # no politeness sleeps in tests
@@ -53,6 +54,38 @@ def test_row_field_mapping_and_disposition():
     assert c.case_no == "F-7211396"
     assert c.disposition == "PGBC"
     assert c.extra["court"] == "FJ"
+    assert rob.raw["detail_id"] == "F-7211396"   # case number drives fetch_detail
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_parses_case_sheet():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/searchByCase"):
+            return httpx.Response(200, content=CASE_DETAIL)
+        return httpx.Response(200, content=b"ok")  # disclaimer + captcha
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("MC13A6231", AdapterContext(client))
+
+    assert rec is not None
+    assert rec.source == "dallas"
+    assert rec.name == "GARCIA MELISSA"              # full name (vs bare "GARCIA" in the list)
+    assert rec.year_of_birth == "1993"              # DOB is unmasked on the case sheet
+    assert rec.sex == "F"
+    assert rec.charges[0].case_no == "MC13A6231"
+    assert "SPD 82/60" in (rec.charges[0].offense or "")
+    detail = rec.raw.get("detail_text") or ""
+    assert "DA CASE ID MC13A6231" in detail and "SETS AND PASSES" in detail   # full sheet kept
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_returns_none_on_error():
+    def handler(request):
+        raise httpx.ConnectError("down")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("MC13A6231", AdapterContext(client))
+    assert rec is None
 
 
 def test_distinct_same_name_masked_dob_are_NOT_merged():

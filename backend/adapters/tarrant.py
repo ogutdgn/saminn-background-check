@@ -129,6 +129,8 @@ class TarrantAdapter(Adapter):
             first_middle = (rec.get("FirstMiddleName") or "").strip()
             name = f"{last}, {first_middle}" if first_middle else last
             cid = rec.get("CID")
+            raw = dict(rec)  # keep the source row verbatim
+            raw["detail_id"] = cid  # what fetch_detail / the UI uses to pull this record
             out.append(
                 InmateRecord(
                     source=self.id,
@@ -137,7 +139,7 @@ class TarrantAdapter(Adapter):
                     year_of_birth=self._derive_year(rec.get("DOB")),
                     sex=self._norm_sex(rec.get("Sex")),
                     matched_on=[MatchInfo(type=MatchType.NAME)],
-                    raw=dict(rec),  # keep the source row verbatim
+                    raw=raw,
                 )
             )
         return out
