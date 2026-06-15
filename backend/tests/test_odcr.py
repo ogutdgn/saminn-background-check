@@ -213,3 +213,14 @@ async def test_search_error_is_isolated_not_raised():
 
     assert res.status == AdapterStatus.ERROR        # never raises out of search()
     assert res.records == [] and res.error
+
+
+@pytest.mark.asyncio
+async def test_search_timeout_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("slow")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="smith"), AdapterContext(client))
+
+    assert res.status == AdapterStatus.TIMEOUT      # the 4th outcome (was untested)
