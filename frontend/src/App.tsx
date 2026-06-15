@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { Loader2, Search, ShieldCheck, X } from "lucide-react"
 import type { AdapterResult } from "@/api/types"
 import { search } from "@/api/search"
-import { SourceCard, type SourceMeta } from "@/components/SourceCard"
+import { Results, type SourceMeta } from "@/components/Results"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
@@ -175,18 +175,26 @@ export default function App() {
           </div>
         )}
 
-        {sources.length > 0 && (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            {sources.map((s) => (
-              <SourceCard key={s.id} source={s} result={results[s.id]} pending={searching} />
-            ))}
-          </div>
+        {hasQuery && sources.length > 0 && (
+          <Results sources={sources} results={results} searching={searching} />
         )}
 
         {!hasQuery && sources.length > 0 && (
-          <p className="text-muted-foreground mt-6 text-center text-sm">
-            Enter a last name above to search all {sources.length} sources at once.
-          </p>
+          <div className="mt-8 text-center">
+            <p className="text-muted-foreground text-sm">
+              Enter a last name above to search all {sources.length} sources at once.
+            </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {sources.map((s) => (
+                <span
+                  key={s.id}
+                  className="text-muted-foreground bg-background inline-flex items-center rounded-full border px-2.5 py-1 text-xs"
+                >
+                  {s.display_name}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
         {sources.length === 0 && !healthError && (
           <p className="text-muted-foreground mt-6 text-center text-sm">Loading sources…</p>
