@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react"
-import { ImageOff, Loader2 } from "lucide-react"
+import {
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  ExternalLink,
+  ImageOff,
+  Loader2,
+  SearchX,
+  TriangleAlert,
+} from "lucide-react"
 import type { AdapterResult, Charge, InmateRecord } from "@/api/types"
 import { fetchDetail } from "@/api/detail"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -14,25 +24,43 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-const STATUS_LABEL: Record<string, string> = {
-  ok: "OK",
-  no_results: "No results",
-  error: "Error",
-  timeout: "Timed out",
+/** What the UI knows about an enabled source (from /api/health) — no per-county hardcoding. */
+export interface SourceMeta {
+  id: string
+  display_name: string
+  transport: string
+  has_photos: boolean
 }
 
-function statusVariant(s: string): "default" | "secondary" | "destructive" {
-  if (s === "ok") return "default"
-  if (s === "no_results") return "secondary"
-  return "destructive" // error / timeout
+// Display-only flavor (the architecture allows per-source *display* copy). Falls back gracefully.
+const SOURCE_KIND: Record<string, string> = {
+  tarrant: "Sheriff jail roster · TX",
+  dallas: "Criminal court records · TX",
+  hunt: "Sheriff jail roster · TX",
+  odcr: "Statewide court records · OK",
+}
+function sourceKind(s: SourceMeta): string {
+  return SOURCE_KIND[s.id] ?? (s.has_photos ? "Jail roster" : "Court records")
 }
 
-function titleCase(id: string): string {
-  return id.charAt(0).toUpperCase() + id.slice(1) + " County"
+type Tone = "ok" | "muted" | "warn" | "danger"
+
+const STATUS: Record<string, { label: string; tone: Tone; Icon: typeof CheckCircle2 }> = {
+  ok: { label: "Match found", tone: "ok", Icon: CheckCircle2 },
+  no_results: { label: "No matches", tone: "muted", Icon: SearchX },
+  error: { label: "Source error", tone: "danger", Icon: TriangleAlert },
+  timeout: { label: "Timed out", tone: "warn", Icon: Clock },
 }
 
-// Sources whose detail includes a mugshot — auto-load it at search for the identity scan.
-const IMAGE_SOURCES = new Set(["tarrant", "hunt"])
+const TONE_BADGE: Record<Tone, string> = {
+  ok: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  muted: "border-zinc-200 bg-zinc-100 text-zinc-600",
+  warn: "border-amber-200 bg-amber-50 text-amber-700",
+  danger: "border-red-200 bg-red-50 text-red-700",
+}
+
+const INITIAL_VISIBLE = 8
+const VISIBLE_STEP = 25
 const AUTO_PHOTO_CAP = 12
 const CONCURRENCY = 3
 
@@ -40,79 +68,40 @@ function detailId(rec: InmateRecord): string | null {
   const v = (rec.raw as Record<string, unknown> | undefined)?.detail_id
   return typeof v === "string" && v ? v : null
 }
-
 function rawText(rec: InmateRecord | undefined, key: string): string | null {
   const v = (rec?.raw as Record<string, unknown> | undefined)?.[key]
   return typeof v === "string" ? v : null
 }
-
 function photoSrc(p?: string | null): string | undefined {
   return p ? `data:image/jpeg;base64,${p}` : undefined
 }
 
-/** Fixed-size image slot: photo, spinner while loading, "No image" once confirmed none,
- *  or a faint placeholder when the photo simply hasn't been fetched yet. */
-function PhotoSlot({
-  photo,
-  loading,
-  fetched,
-  size,
-}: {
-  photo?: string | null
-  loading?: boolean
-  fetched?: boolean // true once detail was fetched (so "no photo" really means none)
-  size: "sm" | "lg"
-}) {
-  const box = size === "lg" ? "h-40 w-32" : "h-16 w-12"
-  if (photo) {
-    return (
-      <img
-        src={photoSrc(photo)}
-        alt="Booking photo"
-        className={`${box} shrink-0 rounded border object-cover`}
-      />
-    )
-  }
-  return (
-    <div
-      className={`bg-muted text-muted-foreground flex ${box} shrink-0 flex-col items-center justify-center gap-1 rounded border`}
-    >
-      {loading ? (
-        <Loader2 className="h-5 w-5 animate-spin" />
-      ) : fetched ? (
-        <>
-          <ImageOff className="h-4 w-4" />
-          <span className="text-[9px] leading-none">No image</span>
-        </>
-      ) : (
-        <ImageOff className="h-4 w-4 opacity-40" />
-      )}
-    </div>
-  )
-}
+// ---------------------------------------------------------------------------
 
 export function SourceCard({
-  id,
+  source,
   result,
   pending,
 }: {
-  id: string
+  source: SourceMeta
   result?: AdapterResult
   pending: boolean
 }) {
-  const title = result?.display_name ?? titleCase(id)
+  const { id, display_name: title, has_photos: hasPhotos } = source
   const records = result?.records ?? []
-  const imageSource = IMAGE_SOURCES.has(id)
 
   const [details, setDetails] = useState<Record<string, InmateRecord>>({})
   const [openRec, setOpenRec] = useState<InmateRecord | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [detailError, setDetailError] = useState(false)
+  const [visible, setVisible] = useState(INITIAL_VISIBLE)
 
+  // Auto-load the first N mugshots for image sources, so staff get a visual identity scan.
   useEffect(() => {
     setDetails({})
     setOpenRec(null)
-    if (!result || !imageSource) return
+    setVisible(INITIAL_VISIBLE)
+    if (!result || !hasPhotos) return
     const ids = records.map(detailId).filter((x): x is string => !!x).slice(0, AUTO_PHOTO_CAP)
     if (ids.length === 0) return
     let cancelled = false
@@ -139,7 +128,6 @@ export function SourceCard({
     else setDetailError(true)
     setLoadingDetail(false)
   }
-
   async function openDetail(rec: InmateRecord) {
     setOpenRec(rec)
     setDetailError(false)
@@ -149,52 +137,92 @@ export function SourceCard({
 
   const openId = openRec ? detailId(openRec) : null
   const openDetailRec = openId ? details[openId] : undefined
+  const status = result ? (STATUS[result.status] ?? STATUS.error) : null
 
   return (
     <>
       <Card className="h-full">
-        <CardHeader>
-          <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-base">{title}</CardTitle>
-            {result ? (
-              <Badge variant={statusVariant(result.status)}>
-                {STATUS_LABEL[result.status] ?? result.status}
+        <CardHeader className="gap-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate font-heading text-base font-semibold">{title}</div>
+              <div className="text-muted-foreground mt-0.5 text-xs">{sourceKind(source)}</div>
+            </div>
+            {status ? (
+              <Badge
+                className={cn("shrink-0 gap-1 border font-medium", TONE_BADGE[status.tone])}
+                variant="outline"
+              >
+                <status.Icon className="size-3" />
+                {status.label}
               </Badge>
             ) : pending ? (
-              <Badge variant="outline" className="gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Searching…
+              <Badge variant="outline" className="text-muted-foreground shrink-0 gap-1">
+                <Loader2 className="size-3 animate-spin" />
+                Searching
               </Badge>
             ) : null}
           </div>
+
           {result && (
-            <p className="text-muted-foreground text-xs">
-              {records.length} record{records.length === 1 ? "" : "s"}
-              {result.total != null && result.total !== records.length ? ` of ${result.total}` : ""}
-              {" · "}
-              {result.duration_ms} ms
-            </p>
-          )}
-          {result?.partial && (
-            <p className="text-xs font-medium text-amber-600">
-              Showing the first {records.length} — add a first name to narrow (more exist).
-            </p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {pending && !result && (
-            <div className="space-y-2">
-              <Skeleton className="h-14 w-full" />
-              <Skeleton className="h-14 w-full" />
+            <div className="text-muted-foreground mt-2 flex items-center gap-1.5 text-xs">
+              <span className="text-foreground font-medium">{records.length.toLocaleString()}</span>
+              <span>
+                {records.length === 1 ? "record" : "records"}
+                {result.total != null && result.total > records.length
+                  ? ` of ${result.total.toLocaleString()}`
+                  : ""}
+              </span>
+              <span aria-hidden>·</span>
+              <span>{formatMs(result.duration_ms)}</span>
             </div>
           )}
-          {result?.status === "error" && (
-            <p className="text-destructive text-sm">{result.error ?? "Source error"}</p>
+        </CardHeader>
+
+        <CardContent className="space-y-2">
+          {/* pending */}
+          {pending && !result && (
+            <div className="space-y-2">
+              <Skeleton className="h-[68px] w-full rounded-lg" />
+              <Skeleton className="h-[68px] w-full rounded-lg" />
+            </div>
+          )}
+
+          {/* partial note */}
+          {result?.partial && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              <span>
+                Showing the first {records.length.toLocaleString()} — add a first name to narrow
+                (more exist).
+              </span>
+            </div>
+          )}
+
+          {/* error / timeout */}
+          {result && (result.status === "error" || result.status === "timeout") && (
+            <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" />
+              <span>
+                {result.status === "timeout"
+                  ? "The source was too slow to respond. Try again — other sources are unaffected."
+                  : (result.error ?? "This source returned an error.")}
+              </span>
+            </div>
+          )}
+
+          {/* no matches */}
+          {result?.status === "no_results" && (
+            <p className="text-muted-foreground py-2 text-center text-sm">
+              No matching records.
+            </p>
           )}
           {result?.status === "ok" && records.length === 0 && (
-            <p className="text-muted-foreground text-sm">No matches.</p>
+            <p className="text-muted-foreground py-2 text-center text-sm">No matching records.</p>
           )}
-          {records.map((rec, i) => {
+
+          {/* records */}
+          {records.slice(0, visible).map((rec, i) => {
             const rid = detailId(rec)
             return (
               <RecordRow
@@ -202,25 +230,39 @@ export function SourceCard({
                 rec={rec}
                 photo={rid ? details[rid]?.photo_base64 : undefined}
                 fetched={!!(rid && details[rid])}
-                showPhoto={imageSource}
+                showPhoto={hasPhotos}
                 hasDetail={!!rid}
                 onOpen={() => openDetail(rec)}
               />
             )
           })}
+
+          {records.length > visible && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => setVisible((v) => v + VISIBLE_STEP)}
+            >
+              Show {Math.min(VISIBLE_STEP, records.length - visible)} more
+              <span className="text-muted-foreground ml-1">
+                ({(records.length - visible).toLocaleString()} hidden)
+              </span>
+            </Button>
+          )}
         </CardContent>
       </Card>
 
       <Dialog open={!!openRec} onOpenChange={(o) => !o && setOpenRec(null)}>
         <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-4xl lg:max-w-5xl">
           {openRec && (
-            <DetailView
+            <RecordDetail
               rec={openRec}
               detail={openDetailRec}
               loading={loadingDetail}
               error={detailError}
               onRetry={() => openId && loadDetail(openId)}
-              imageSource={imageSource}
+              hasPhotos={hasPhotos}
               sourceTitle={title}
             />
           )}
@@ -229,6 +271,8 @@ export function SourceCard({
     </>
   )
 }
+
+// ---------------------------------------------------------------------------
 
 function RecordRow({
   rec,
@@ -245,61 +289,124 @@ function RecordRow({
   hasDetail: boolean
   onOpen: () => void
 }) {
-  const meta = [rec.year_of_birth ? `b. ${rec.year_of_birth}` : null, rec.sex]
+  const meta = [rec.year_of_birth ? `b. ${rec.year_of_birth}` : null, sexLabel(rec.sex)]
     .filter(Boolean)
     .join(" · ")
   const charges = rec.charges ?? []
   const matched = rec.matched_on ?? []
+  const role = matched[0]?.detail
 
-  return (
-    <div className="rounded-md border p-3">
-      <div className="flex gap-3">
-        {showPhoto && <PhotoSlot photo={photo} fetched={fetched} size="sm" />}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="text-sm font-medium">{rec.name}</div>
-            <div className="flex shrink-0 gap-1">
-              {matched.map((m, i) => (
-                <Badge key={i} variant="outline" className="px-1.5 py-0 text-[10px] uppercase">
-                  {m.type}
-                </Badge>
-              ))}
-            </div>
-          </div>
-          {meta && <div className="text-muted-foreground mt-0.5 text-xs">{meta}</div>}
-          {charges.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {charges.map((c, i) => (
-                <li key={i} className="flex flex-wrap items-center gap-1.5 text-sm">
-                  <span>{c.offense ?? "—"}</span>
-                  {c.disposition && (
-                    <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-                      {c.disposition}
-                    </Badge>
-                  )}
-                  {c.case_no && <span className="text-muted-foreground text-xs">#{c.case_no}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-          {hasDetail && (
-            <Button variant="ghost" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={onOpen}>
-              More details
-            </Button>
-          )}
+  const inner = (
+    <div className="flex gap-3">
+      {showPhoto && <PhotoSlot photo={photo} fetched={fetched} size="sm" />}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="truncate text-sm font-semibold">{rec.name}</div>
+          {matched.map((m, i) => (
+            <Badge
+              key={i}
+              variant="outline"
+              className="text-muted-foreground shrink-0 text-[10px] uppercase"
+              title={m.detail ?? undefined}
+            >
+              {m.type}
+            </Badge>
+          ))}
         </div>
+        {(meta || role) && (
+          <div className="text-muted-foreground mt-0.5 truncate text-xs">
+            {[meta, role].filter(Boolean).join(" · ")}
+          </div>
+        )}
+        {charges.length > 0 && (
+          <ul className="mt-1.5 space-y-1">
+            {charges.slice(0, 2).map((c, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="text-foreground">{c.offense ?? "—"}</span>
+                {c.disposition && (
+                  <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                    {c.disposition}
+                  </Badge>
+                )}
+                {c.case_no && <span className="text-muted-foreground">#{c.case_no}</span>}
+              </li>
+            ))}
+            {charges.length > 2 && (
+              <li className="text-muted-foreground text-xs">+{charges.length - 2} more</li>
+            )}
+          </ul>
+        )}
       </div>
+      {hasDetail && (
+        <ChevronRight className="text-muted-foreground/60 mt-0.5 size-4 shrink-0 self-center transition-transform group-hover/row:translate-x-0.5" />
+      )}
+    </div>
+  )
+
+  if (!hasDetail) {
+    return <div className="rounded-lg border p-3">{inner}</div>
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group/row hover:border-foreground/20 hover:bg-muted/40 focus-visible:ring-ring/50 block w-full rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
+    >
+      {inner}
+    </button>
+  )
+}
+
+/** Fixed-size image slot: photo, spinner while loading, "No image" once confirmed none, or a faint
+ *  placeholder when the photo simply hasn't been fetched yet. */
+function PhotoSlot({
+  photo,
+  loading,
+  fetched,
+  size,
+}: {
+  photo?: string | null
+  loading?: boolean
+  fetched?: boolean
+  size: "sm" | "lg"
+}) {
+  const box = size === "lg" ? "h-44 w-36" : "h-16 w-12"
+  if (photo) {
+    return (
+      <img
+        src={photoSrc(photo)}
+        alt="Booking photo"
+        className={`${box} shrink-0 rounded-md border object-cover`}
+      />
+    )
+  }
+  return (
+    <div
+      className={`bg-muted text-muted-foreground flex ${box} shrink-0 flex-col items-center justify-center gap-1 rounded-md border`}
+    >
+      {loading ? (
+        <Loader2 className="size-5 animate-spin" />
+      ) : fetched ? (
+        <>
+          <ImageOff className="size-4" />
+          <span className="text-[9px] leading-none">No image</span>
+        </>
+      ) : (
+        <ImageOff className="size-4 opacity-40" />
+      )}
     </div>
   )
 }
 
-function DetailView({
+// ---------------------------------------------------------------------------
+
+function RecordDetail({
   rec,
   detail,
   loading,
   error,
   onRetry,
-  imageSource,
+  hasPhotos,
   sourceTitle,
 }: {
   rec: InmateRecord
@@ -307,7 +414,7 @@ function DetailView({
   loading: boolean
   error: boolean
   onRetry: () => void
-  imageSource: boolean
+  hasPhotos: boolean
   sourceTitle: string
 }) {
   const name = detail?.name || rec.name
@@ -316,14 +423,13 @@ function DetailView({
   const sex = detail?.sex ?? rec.sex
   const charges: Charge[] = (detail?.charges?.length ? detail.charges : rec.charges) ?? []
   const sheet = rawText(detail, "detail_text")
-  const meta = [yob ? `b. ${yob}` : null, sex].filter(Boolean).join(" · ")
-  // show the portrait slot for image sources, or once we've fetched detail (so "No image" is true)
-  const showPortrait = imageSource || !!photo || (!loading && !!detail)
+  const meta = [yob ? `b. ${yob}` : null, sexLabel(sex)].filter(Boolean).join(" · ")
+  const showPortrait = hasPhotos || !!photo || (!loading && !!detail)
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{name}</DialogTitle>
+        <DialogTitle className="text-lg">{name}</DialogTitle>
         <DialogDescription>
           {sourceTitle}
           {meta ? ` · ${meta}` : ""}
@@ -337,7 +443,7 @@ function DetailView({
           <div className="text-sm font-medium">Charges</div>
           {loading && charges.length === 0 && (
             <p className="text-muted-foreground flex items-center gap-2 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading details…
+              <Loader2 className="size-4 animate-spin" /> Loading details…
             </p>
           )}
           {!loading && !error && charges.length === 0 && (
@@ -361,28 +467,28 @@ function DetailView({
               href={rec.source_url}
               target="_blank"
               rel="noreferrer"
-              className="text-primary inline-block text-xs underline"
+              className="text-primary inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
             >
-              Open the source record ↗
+              Open the source record <ExternalLink className="size-3" />
             </a>
           )}
         </div>
       </div>
 
       {error && !detail && (
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-          <span className="text-destructive">
-            Couldn't load the full record — the county site is slow or didn't respond.
+        <div className="mt-1 flex flex-wrap items-center gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm">
+          <span className="text-red-700">
+            Couldn't load the full record — the source site is slow or didn't respond.
           </span>
           <Button variant="outline" size="sm" className="h-7" onClick={onRetry}>
             Retry
           </Button>
         </div>
       )}
-      {loading && !sheet && !imageSource && (
-        <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-2 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Fetching the court case sheet…
-          <span className="text-xs">(the county site is slow — this can take 10–15s)</span>
+      {loading && !sheet && !hasPhotos && (
+        <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-sm">
+          <Loader2 className="size-4 animate-spin" /> Fetching the court case sheet…
+          <span className="text-xs">(the source site is slow — this can take 10–15s)</span>
         </div>
       )}
       {sheet && <CaseSheet text={sheet} source={rec.source} sourceTitle={sourceTitle} />}
@@ -390,7 +496,6 @@ function DetailView({
   )
 }
 
-/** Render a court case sheet to look like the real document, not plain text. */
 const CASE_SHEET_HEADERS: Record<string, string> = {
   dallas: "Dallas County · Felony & Misdemeanor Courts · Case Information",
   odcr: "Oklahoma · On Demand Court Records · Case Record",
@@ -406,11 +511,9 @@ function CaseSheet({
   sourceTitle: string
 }) {
   const header = CASE_SHEET_HEADERS[source] ?? `${sourceTitle} · Case Record`
-  // Dallas repeats its county name as the first line — drop it (the header bar shows it). Other
-  // sources put meaningful content on line 1 (e.g. the ODCR case caption), so keep it.
   const body = source === "dallas" ? text.replace(/^Dallas County[^\n]*\n/i, "") : text
   return (
-    <div className="mt-3">
+    <div className="mt-1">
       <div className="mb-1 text-sm font-medium">Court case sheet</div>
       <div className="overflow-hidden rounded-md border border-zinc-300 shadow-sm">
         <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide text-zinc-700 uppercase">
@@ -425,4 +528,14 @@ function CaseSheet({
       </div>
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+
+function sexLabel(sex?: string | null): string | null {
+  if (!sex) return null
+  return { M: "Male", F: "Female", U: "Unknown" }[sex] ?? sex
+}
+function formatMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`
 }
