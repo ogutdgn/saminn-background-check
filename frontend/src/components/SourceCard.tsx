@@ -107,6 +107,7 @@ export function SourceCard({
   const [details, setDetails] = useState<Record<string, InmateRecord>>({})
   const [openRec, setOpenRec] = useState<InmateRecord | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [detailError, setDetailError] = useState(false)
 
   useEffect(() => {
     setDetails({})
@@ -130,15 +131,20 @@ export function SourceCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result])
 
+  async function loadDetail(rid: string) {
+    setLoadingDetail(true)
+    setDetailError(false)
+    const d = await fetchDetail(id, rid)
+    if (d) setDetails((prev) => ({ ...prev, [rid]: d }))
+    else setDetailError(true)
+    setLoadingDetail(false)
+  }
+
   async function openDetail(rec: InmateRecord) {
     setOpenRec(rec)
+    setDetailError(false)
     const rid = detailId(rec)
-    if (rid && !details[rid]) {
-      setLoadingDetail(true)
-      const d = await fetchDetail(id, rid)
-      if (d) setDetails((prev) => ({ ...prev, [rid]: d }))
-      setLoadingDetail(false)
-    }
+    if (rid && !details[rid]) await loadDetail(rid)
   }
 
   const openId = openRec ? detailId(openRec) : null
@@ -212,6 +218,8 @@ export function SourceCard({
               rec={openRec}
               detail={openDetailRec}
               loading={loadingDetail}
+              error={detailError}
+              onRetry={() => openId && loadDetail(openId)}
               imageSource={imageSource}
               sourceTitle={title}
             />
@@ -289,12 +297,16 @@ function DetailView({
   rec,
   detail,
   loading,
+  error,
+  onRetry,
   imageSource,
   sourceTitle,
 }: {
   rec: InmateRecord
   detail?: InmateRecord
   loading: boolean
+  error: boolean
+  onRetry: () => void
   imageSource: boolean
   sourceTitle: string
 }) {
@@ -328,7 +340,7 @@ function DetailView({
               <Loader2 className="h-4 w-4 animate-spin" /> Loading details…
             </p>
           )}
-          {!loading && charges.length === 0 && (
+          {!loading && !error && charges.length === 0 && (
             <p className="text-muted-foreground text-sm">No charges listed.</p>
           )}
           <ul className="space-y-1.5">
@@ -357,9 +369,20 @@ function DetailView({
         </div>
       </div>
 
-      {loading && !sheet && (
-        <div className="text-muted-foreground mt-3 flex items-center gap-2 text-sm">
+      {error && !detail && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-destructive">
+            Couldn't load the full record — the county site is slow or didn't respond.
+          </span>
+          <Button variant="outline" size="sm" className="h-7" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {loading && !sheet && !imageSource && (
+        <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" /> Fetching the court case sheet…
+          <span className="text-xs">(the county site is slow — this can take 10–15s)</span>
         </div>
       )}
       {sheet && <CaseSheet text={sheet} />}

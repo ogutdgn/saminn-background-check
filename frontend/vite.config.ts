@@ -14,8 +14,14 @@ export default defineConfig({
   server: {
     port: process.env.PORT ? Number(process.env.PORT) : 5173,
     // Dev: proxy API calls to the FastAPI backend so the browser sees one origin.
+    // Generous timeouts — a Dallas case-sheet fetch can legitimately take 10–15s.
     proxy: {
-      "/api": { target: "http://127.0.0.1:8099", changeOrigin: true },
+      "/api": {
+        target: "http://127.0.0.1:8099",
+        changeOrigin: true,
+        timeout: 60000,
+        proxyTimeout: 60000,
+      },
     },
   },
 })
