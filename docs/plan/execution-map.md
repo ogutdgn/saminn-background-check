@@ -32,7 +32,7 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 2: Sources (in progress) — 2 of ~6 live
+## CURRENT PHASE → Phase 2: Sources (in progress) — 3 of ~6 live
 > **Phase 0 ✅** and **Phase 1 ✅** (the vertical slice runs end to end). Dated entries in [last-point.md](last-point.md).
 >
 > **Phase 1 (Scaffold) — core COMPLETE; 2 infra pieces deferred *by design* (not unfinished):**
@@ -42,11 +42,13 @@
 >
 > **Phase 2 (Sources) — in progress:**
 > - [x] Tarrant (T1, http) · [x] Dallas (T2, http) — both live, with photos / case-sheet detail-on-demand.
-> - [ ] Hunt (T2) · [ ] ODCR (T2, OK statewide) · [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
+> - [x] **ODCR (T2, OK statewide)** — live on `source/odcr`; one adapter for 70+ OK counties.
+> - [ ] Hunt (T2) · [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
 >
 > **Loose ends:** [x] `ARCHITECTURE.md` contract synced (2026-06-15). Open: tune Dallas paging latency
-> (~18 s); tighten the Dallas name/DOB parser; replace the frontend `IMAGE_SOURCES` hardcode with a
-> backend photo-capability flag; checkpoint-merge the branch to `main`. Team: **solo**.
+> (~18 s, worse with a first name — timed out at 30 s on SMITH/JOHN); tighten the Dallas name/DOB parser;
+> replace the frontend `IMAGE_SOURCES` hardcode with a backend photo-capability flag; **merge `source/odcr`
+> (and the `source/tarrant*` everything-branch) to `main`** — branch hygiene debt is growing. Team: **solo**.
 
 ## Daily work log
 
@@ -56,7 +58,13 @@
 - [x] **UI polish:** "No image" placeholders, search + popup **loading spinners**, wider/taller popup so the case sheet fits.
 - [x] **Robustness:** `AdapterResult.partial` + Dallas time-budgeted pagination (no more timeout→0); detail fetch timeout + Retry; 60s dev-proxy timeout (Dallas detail is ~5–15s server-side). **38 tests pass.**
 - [x] **Cleanup:** synced `ARCHITECTURE.md` contract spec (structured `SearchQuery`, `partial`, `fetch_detail`); clarified Phase-1 deferral (browser/cache).
-- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · `IMAGE_SOURCES`→backend flag · merge branch to `main` · **next source (ODCR/Hunt)**.
+
+**(2nd session) — ODCR source, full pipeline on `source/odcr`:**
+- [x] **Stage 1 spike (live):** proved the ODCR pull — GET `/` (cookie) → POST `/search` (`party="LAST, FIRST"`, `party-type=P+D`) → 302 → `/results`, paged via `GET /results?page=N` (server caps at 1,000). Captured fixtures (page1/page2/no-results/detail/form) + spike notes `backend/tests/fixtures/odcr/README.md`.
+- [x] **Stage 2 adapter** `adapters/odcr.py` (Tier 2, http): one record per case-row, ` - ST ` offense/disposition split (full text kept), `matched_on=NAME`+party role, stable `/detail` deep link; **no DOB/sex/photo** (court index). Registered disabled.
+- [x] **Stage 3 tests** `test_odcr.py` (11): parsing, count, no-results, party-string, dedup pagination, max_results/time-budget `partial`, error isolation. **Full suite 49 pass** (was 38).
+- [x] **Stage 4 enable + verify:** flipped enabled; verified live through the **orchestrator** (552 ms, OK, total=1000, partial) and the **SSE API** (`POST /api/search` → ODCR `result` event). Streams independently (Dallas timed out on the same query; ODCR unaffected). SOURCES.md → ODCR/Tarrant/Dallas `done`.
+- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · `IMAGE_SOURCES`→backend flag · merge `source/odcr` + everything-branch to `main` · **next source: Hunt (T2, quickest) or Denton (T3)**.
 
 ### 2026-06-14
 - [x] Stage-1 raw pulls (live): **Tarrant** (JSON jTable, 3-call flow + base64 mugshot) and **Dallas** (HTML court search, disclaimer gate, dispositions, no mugshots). Fixtures + spike notes committed.

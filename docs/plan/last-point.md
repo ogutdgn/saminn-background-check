@@ -7,6 +7,43 @@
 
 ---
 
+## 2026-06-15 (2nd session) — ODCR live: Phase 2 now 3 of ~6 sources
+
+- **Branch:** `source/odcr` (off the `source/tarrant*` everything-branch; not merged to `main`).
+- **Phase:** **Phase 2 (Sources) — 3 of ~6 live** (Tarrant, Dallas, **ODCR**).
+- **State summary:** Built the **Oklahoma ODCR** source end-to-end through the full add-a-source
+  pipeline (Stage 1→4) and verified it live through the orchestrator and the SSE API. One adapter
+  covers **70+ OK counties** statewide — high coverage-per-adapter.
+- **Done this session:**
+  - **Stage 1 (spike, live):** proved the pull — GET `/` (session cookie) → POST `/search`
+    (`party="LAST, FIRST"`, `party-type=P+D`, `court=""`=statewide) **302→ `/results`**, paged with
+    `GET /results?page=N` (~15/page; server **caps at 1,000**). Captured fixtures (page1/page2/
+    no-results/detail/form, git-ignored) + spike notes (`backend/tests/fixtures/odcr/README.md`).
+  - **Stage 2 (adapter):** `backend/adapters/odcr.py` (Tier 2, http). One `InmateRecord` per
+    case-row (no person-grouping — ODCR has **no identity key**); `" - ST "` splits the
+    "Offense or Cause" cell into offense/disposition (full text preserved in `extra`);
+    `matched_on=NAME` + party role; stable `/detail?court=&casekey=` deep link. **No DOB/sex/
+    mugshots anywhere** (court index → name-only matches). Registered disabled.
+  - **Stage 3 (tests):** `backend/tests/test_odcr.py` — **11 tests** (parse, count=1000, "0 results",
+    party-string build, dedup pagination across page1+page2, `partial` at max_results & time-budget,
+    error isolation). **Full suite 49 pass** (was 38).
+  - **Stage 4 (enable + verify):** flipped `enabled=True`; verified **live** via the orchestrator
+    (OK, total=1000, partial, 552 ms, correctly parsed) and the **SSE API** (`POST /api/search` →
+    ODCR `result` event, contract-shaped). Confirmed it **streams independently** — on SMITH/JOHN
+    Dallas timed out at 30 s while ODCR returned fine (failure isolation working). SOURCES.md:
+    ODCR + Tarrant + Dallas Build → `done`.
+- **Architecture check:** no contract change needed — ODCR is a clean third adapter behind the
+  same `Adapter`/`InmateRecord`/`AdapterResult` shapes; the engine/API/UI are untouched (the
+  one-adapter-per-source pattern held for a court *index* with even less identity data than Dallas).
+- **Next:** **Hunt** (T2, quickest — open Sheriff Classic-ASP roster) or **Denton** (T3, stateful
+  Tyler). Then Collin (T4 → build `browser.py`). **Branch hygiene:** merge `source/odcr` (and the
+  everything-branch) to `main` — debt is growing. Loose ends: Dallas latency (worse with a first
+  name), Dallas name/DOB parser, `IMAGE_SOURCES`→backend photo-capability flag.
+- **Blockers/notes:** none for ODCR. Dallas latency is the one pre-existing rough edge (its own
+  loose end, not an ODCR issue).
+
+---
+
 ## 2026-06-15 — Detail UX complete + architecture review + doc cleanup
 
 - **Branch:** `source/tarrant` (still the everything-branch; not yet merged to `main`).
