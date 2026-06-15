@@ -52,6 +52,7 @@ class HuntAdapter(Adapter):
     display_name = "Hunt County"
     transport = "http"
     tier = 2
+    has_photos = True   # Sheriff jail roster -> mugshot via fetch_detail (booking.asp)
 
     RESULTS_URL = f"{_BASE}/results.asp"
     BOOKING_URL = f"{_BASE}/booking.asp"

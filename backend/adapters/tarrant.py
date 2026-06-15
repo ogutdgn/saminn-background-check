@@ -41,6 +41,7 @@ class TarrantAdapter(Adapter):
     display_name = "Tarrant County"
     transport = "http"
     tier = 1
+    has_photos = True   # Sheriff roster -> mugshot via fetch_detail
 
     LIST_URL = f"{_BASE}/Home/GetSearchResults"
     DETAIL_URL = f"{_BASE}/Home/Details"

@@ -67,7 +67,12 @@ async def test_health_lists_enabled_sources():
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    assert "tarrant" in body["sources"] and "dallas" in body["sources"]  # enabled (Stage 4)
+    # sources carry the metadata the UI renders cards from (id, display name, photo capability)
+    by_id = {s["id"]: s for s in body["sources"]}
+    assert "tarrant" in by_id and "dallas" in by_id        # enabled (Stage 4)
+    assert by_id["tarrant"]["display_name"] == "Tarrant County"
+    assert by_id["tarrant"]["has_photos"] is True          # jail roster -> mugshots
+    assert by_id["dallas"]["has_photos"] is False          # court records -> no mugshots
 
 
 @pytest.mark.asyncio

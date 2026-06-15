@@ -66,7 +66,21 @@ def get_adapters() -> list[Adapter]:
 
 @app.get("/api/health")
 async def health() -> dict:
-    return {"status": "ok", "sources": [a.id for a in registry.enabled_adapters()]}
+    """Liveness + the enabled sources, with enough metadata for the UI to render a card per source
+    up front (its real display name, transport, whether it carries mugshots) — so the frontend needs
+    no hardcoded per-source knowledge (no "Odcr County" guess, no IMAGE_SOURCES list)."""
+    return {
+        "status": "ok",
+        "sources": [
+            {
+                "id": a.id,
+                "display_name": a.display_name,
+                "transport": a.transport,
+                "has_photos": a.has_photos,
+            }
+            for a in registry.enabled_adapters()
+        ],
+    }
 
 
 # Declared for the OpenAPI schema (frontend type generation) — the live route streams.

@@ -164,6 +164,9 @@ class Adapter(ABC):
     display_name: str      # "Tarrant County"
     transport: str         # "http" | "browser"
     tier: int              # 1..5, see docs/SOURCES.md
+    has_photos: bool = False  # True when this source's detail carries a mugshot (jail rosters) — the
+                              # UI auto-loads the photo at search for the identity scan. /api/health
+                              # surfaces it so the frontend needn't hardcode which sources have images.
     timeout_s: float | None = None  # optional per-source total budget (seconds); None = engine
                                      # default. Slow court systems (ODCR's cold POST ~16s, Dallas
                                      # paging a common surname ~19s) raise this so they aren't cut
