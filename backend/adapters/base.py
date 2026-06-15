@@ -164,6 +164,10 @@ class Adapter(ABC):
     display_name: str      # "Tarrant County"
     transport: str         # "http" | "browser"
     tier: int              # 1..5, see docs/SOURCES.md
+    timeout_s: float | None = None  # optional per-source total budget (seconds); None = engine
+                                     # default. Slow court systems (ODCR's cold POST ~16s, Dallas
+                                     # paging a common surname ~19s) raise this so they aren't cut
+                                     # off mid-search, while fast jail rosters keep the tight default.
 
     @abstractmethod
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:

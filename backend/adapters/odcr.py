@@ -55,6 +55,7 @@ class OdcrAdapter(Adapter):
     display_name = "Oklahoma (ODCR)"
     transport = "http"
     tier = 2
+    timeout_s = 45.0   # POST /search is cold-slow (~16s) on the first hit of a session; give margin
 
     max_pages = 20         # safety cap on the paging loop (server caps results at 1,000 / ~67 pages)
     page_delay_s = 0.15    # politeness pause between pages (ODCR is open, but be a good citizen)

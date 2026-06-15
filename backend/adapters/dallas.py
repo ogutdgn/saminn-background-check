@@ -44,6 +44,8 @@ class DallasAdapter(Adapter):
     display_name = "Dallas County"
     transport = "http"
     tier = 2
+    # No timeout override: Dallas self-limits its paging to the engine budget (budget_margin_s),
+    # so it already returns within the default ~20s. A bigger budget would just make it page longer.
 
     max_pages = 15        # safety cap on the paging loop
     page_delay_s = 0.05   # small politeness pause (Dallas has only a disclaimer gate, no WAF)

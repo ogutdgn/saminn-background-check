@@ -53,13 +53,22 @@ async def run_search(
     if not sources:
         return
 
+    # Per-source budget: a slow court system can declare `timeout_s` to get more than the fast
+    # default (an adapter that doesn't declare one keeps `timeout_s`). The shared client's timeout
+    # is the widest budget so a long request isn't cut prematurely — each source is still governed
+    # by its own `wait_for` below, and one slow source never blocks the others (completion-order).
+    budgets = {a.id: (a.timeout_s or timeout_s) for a in sources}
+    client_timeout = max([timeout_s, *budgets.values()])
+
     async with httpx.AsyncClient(
         headers={"User-Agent": _USER_AGENT},
         follow_redirects=True,
-        timeout=httpx.Timeout(timeout_s),
+        timeout=httpx.Timeout(client_timeout),
     ) as client:
-        ctx = AdapterContext(client, timeout_s=timeout_s)
-        pending = [_run_one(a, query, ctx, timeout_s) for a in sources]
+        pending = [
+            _run_one(a, query, AdapterContext(client, timeout_s=budgets[a.id]), budgets[a.id])
+            for a in sources
+        ]
         for completed in asyncio.as_completed(pending):
             yield await completed
 
