@@ -40,13 +40,13 @@
 > - [x] Backend project setup (`.venv`, `pyproject.toml`, `pytest`).
 > - [x] **The contract:** `backend/adapters/base.py` (InmateRecord/AdapterResult/Adapter + structured `SearchQuery`) + `registry.py`. **Locked v1 — validated against two real sources.**
 > - [x] **First two adapters early** (we pulled raw first): `tarrant.py` + `dallas.py`, fixture-tested, adversarially verified, registered **disabled**. (Stage 2–3.)
-> - [ ] **Core engine:** `orchestrator.py` (fan-out + SSE-yield + timeout/isolation) + `audit.py`. (`browser.py`, `cache.py` deferred until a source needs them.)
+> - [x] **Core engine:** `orchestrator.py` (fan-out + completion-order stream + timeout/isolation) + `audit.py` (append-only SQLite). (`browser.py`, `cache.py` deferred until a source needs them.)
 > - [ ] **API:** `backend/web/app.py` with `POST /api/search` SSE.
 > - [ ] **Frontend:** Vite + TS scaffold, SSE client, one source card; types from OpenAPI.
-> - [ ] **Vertical slice:** search → orchestrator → SSE → card, end-to-end (using the real Tarrant/Dallas adapters).
+> - [ ] **Vertical slice:** search → orchestrator → SSE → card, end-to-end (enable Tarrant + Dallas).
 >
-> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`; Dallas
-> pagination is a Stage-4 blocker. Team-size question resolved: **solo** (no team-division doc).
+> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`. (Dallas
+> pagination ✅ solved.) Team-size resolved: **solo** (no team-division doc).
 
 ## Daily work log
 
@@ -56,8 +56,10 @@
 - [x] Built + fixture-tested **Tarrant** and **Dallas** adapters (Stage 2–3); registered disabled.
 - [x] **Adversarial verification workflow** (3 agents) — caught + fixed a real Dallas grouping bug (masked-DOB merge/split → one record per case-row), `total=None`, Tarrant sex→None. 19 tests pass. Committed.
 - [x] Carried over from 06-10: team size **resolved (solo)** → team-division doc dropped; foundation + plan docs committed.
-- [ ] Orchestrator + audit log → API SSE → frontend card → vertical slice.
-- [ ] Sync `ARCHITECTURE.md` `SearchQuery`; resolve Dallas pagination (Stage-4 blocker).
+- [x] **Core engine:** orchestrator (fan-out, completion-order streaming, hard timeout, failure isolation) + append-only audit log. Stub-adapter tests.
+- [x] **Dallas pagination solved** — `POST /paging` (`which=down`) + dedup, verified live (3-page SMITH) and against the prior demo's `dallas.ts`. **28 tests pass.**
+- [ ] API SSE (`/api/search`) → frontend card → vertical slice (enable Tarrant + Dallas).
+- [ ] Sync `ARCHITECTURE.md` `SearchQuery`.
 
 ### 2026-06-10
 - [x] Reviewed the existing demo (Next.js + Python versions) and extracted the reusable **knowledge** (source tiers, per-site gotchas) rather than the code.

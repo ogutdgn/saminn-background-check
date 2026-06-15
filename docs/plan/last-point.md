@@ -7,6 +7,26 @@
 
 ---
 
+## 2026-06-14 (cont.) — Engine built + Dallas pagination solved
+
+- **Branch:** `source/tarrant` (all Phase-1 scaffold work; not yet merged to `main`).
+- **Phase:** **Phase 1 (Scaffold) — in progress.** Contract + 2 adapters + **engine** done; API/frontend next.
+- **Done (this stretch):**
+  - **Orchestrator** (`core/orchestrator.py`): `run_search()` async generator — concurrent
+    fan-out to enabled adapters, hard per-source timeout, failure isolation, yields each
+    `AdapterResult` in completion order (drives SSE). **Audit log** (`core/audit.py`):
+    append-only SQLite. Stub-adapter tests.
+  - **Dallas pagination solved** (was the Stage-4 blocker): `search()` follows `POST /paging`
+    (`which=down`) + dedup set; stops on no-new-rows / `max_results` / `max_pages`. Verified
+    against a live 3-page SMITH capture (54 distinct rows) and the prior demo's `dallas.ts`.
+  - **28 tests pass.** Commits: `feat(core)…`, `feat(dallas): follow result pagination…`.
+- **Next:** FastAPI `POST /api/search` SSE → React/Vite frontend + one card → **vertical slice**
+  (enable Tarrant + Dallas, type a name, watch cards stream). Then sync `ARCHITECTURE.md`.
+- **Notes:** Looked at the prior demo (`CODING/script-codes/samaritan-inn-scripts`) to confirm
+  the Dallas paging technique. Both adapters still **disabled** until the slice enables them.
+
+---
+
 ## 2026-06-14 — Phase 1: contract locked, Tarrant + Dallas adapters built & verified
 
 - **Branch:** `source/tarrant` (foundation + adapters committed; not yet merged to `main`).
