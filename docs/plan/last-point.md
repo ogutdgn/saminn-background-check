@@ -7,6 +7,25 @@
 
 ---
 
+## 2026-06-14 (detail + photos) — on-demand record detail + profile mugshots
+
+- **Branch:** `source/tarrant`. **Phase 1 done + hardening/UX on the two live sources.**
+- **Done:**
+  - **Backend:** optional `Adapter.fetch_detail(id, ctx)` (contract, additive) + `GET
+    /api/record/{source}/{id}`. Tarrant implements it (CID → mugshot + full charges via
+    `hydrate`). Dallas not yet (its detail link is session-relative — would use Search-by-Case).
+  - **Frontend:** each record has a **"More details"** expand; **image sources auto-load the
+    booking photo** at search (first 12, concurrency 3) so staff get a visual identity check
+    while scanning. Dallas shows list charges + the partial note (no photo).
+  - **Dallas timeout fix** (earlier same day): `AdapterResult.partial` + time-budgeted paging —
+    a common name returns partial results instead of timing out to zero.
+  - **36 backend tests pass.** Verified live in-browser (GARCIA → 12 mugshots + 31 detail buttons;
+    expand reveals charges).
+- **Next:** Dallas "More details" (via Search-by-Case on the stable case number); tune Dallas
+  paging latency; then **Phase 2 sources** (Hunt / ODCR / Denton → Collin → Fannin).
+
+---
+
 ## 2026-06-14 (vertical slice) — Phase 1 COMPLETE, runs end to end
 
 - **Branch:** `source/tarrant` (all Phase-1 scaffold work; not yet merged to `main`).
