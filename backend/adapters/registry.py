@@ -26,8 +26,8 @@ class RegistryEntry:
 # One line per source, added as each is built. Disabled until it goes live (Stage 4),
 # i.e. flip to `enabled=True` once it's verified end-to-end in the running app.
 REGISTRY: list[RegistryEntry] = [
-    RegistryEntry(TarrantAdapter()),   # Stage 2 — built + tested, not yet live
-    RegistryEntry(DallasAdapter()),    # Stage 2 — built + tested, not yet live
+    RegistryEntry(TarrantAdapter(), enabled=True),   # Stage 4 — live
+    RegistryEntry(DallasAdapter(), enabled=True),    # Stage 4 — live (pagination handled)
 ]
 
 

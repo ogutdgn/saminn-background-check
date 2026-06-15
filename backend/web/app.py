@@ -1,0 +1,88 @@
+"""FastAPI app — `POST /api/search` streams one SSE event per source.
+
+The thin HTTP boundary: validate the `SearchQuery`, write the audit entry, and stream
+each `AdapterResult` from the orchestrator as it lands (`text/event-stream`). No scraping
+or per-county logic here. Request/response bodies are the Pydantic contract models, so
+FastAPI's generated OpenAPI schema is the source of truth for the frontend's TS types.
+"""
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
+
+from adapters import registry
+from adapters.base import Adapter, AdapterResult, SearchQuery
+from core.audit import AuditLog
+from core.orchestrator import run_search
+
+_DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "audit.sqlite"
+
+
+def _db_path() -> Path:
+    path = Path(os.environ.get("SAMINN_AUDIT_DB", _DEFAULT_DB))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.audit = AuditLog(_db_path())
+    try:
+        yield
+    finally:
+        app.state.audit.close()
+
+
+app = FastAPI(
+    title="The Samaritan Inn — Background Search",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Dev only: the Vite dev server is a different origin. In prod the built frontend is
+# served from this same origin, so this is a no-op there.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def get_audit(request: Request) -> AuditLog:
+    return request.app.state.audit
+
+
+def get_adapters() -> list[Adapter]:
+    """The enabled adapters the search fans out to (overridable in tests)."""
+    return registry.enabled_adapters()
+
+
+@app.get("/api/health")
+async def health() -> dict:
+    return {"status": "ok", "sources": [a.id for a in registry.enabled_adapters()]}
+
+
+# Declared for the OpenAPI schema (frontend type generation) — the live route streams.
+@app.post("/api/search", response_model=AdapterResult, responses={200: {"content": {"text/event-stream": {}}}})
+async def search(
+    query: SearchQuery,
+    audit: AuditLog = Depends(get_audit),
+    adapters: list[Adapter] = Depends(get_adapters),
+    staff: str | None = None,
+) -> EventSourceResponse:
+    """Fan `query` out to the enabled sources; stream one SSE `result` event per source,
+    then a final `done` event. A source that errors emits a `result` with status `error`
+    — it never breaks the stream for the others."""
+
+    async def event_stream():
+        async for result in run_search(query, adapters=adapters, audit=audit, staff=staff):
+            yield {"event": "result", "data": result.model_dump_json()}
+        yield {"event": "done", "data": "{}"}
+
+    return EventSourceResponse(event_stream())

@@ -7,6 +7,9 @@ dependencies = [
     "pydantic>=2.7",   # the data contract (base.py) + API schema
     "httpx>=0.27",     # async HTTP for the http-tier adapters
     "selectolax>=0.3.21",  # fast HTML parsing for HTML-tier sources (e.g. Dallas)
+    "fastapi>=0.110",  # the web app + auto OpenAPI (frontend types)
+    "sse-starlette>=2.0",  # Server-Sent Events response for /api/search
+    "uvicorn[standard]>=0.29",  # ASGI server to run the app
 ]
 
 [project.optional-dependencies]
