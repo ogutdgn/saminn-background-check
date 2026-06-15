@@ -212,7 +212,7 @@ export function SourceCard({
       </Card>
 
       <Dialog open={!!openRec} onOpenChange={(o) => !o && setOpenRec(null)}>
-        <DialogContent className="max-h-[88vh] overflow-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-4xl lg:max-w-5xl">
           {openRec && (
             <DetailView
               rec={openRec}
@@ -402,7 +402,7 @@ function CaseSheet({ text }: { text: string }) {
           Dallas County · Felony &amp; Misdemeanor Courts · Case Information
         </div>
         <pre
-          className="max-h-80 overflow-auto bg-[#fcfbf6] px-4 py-3 text-[11px] leading-[1.5] whitespace-pre text-zinc-800"
+          className="max-h-[60vh] overflow-auto bg-[#fcfbf6] px-4 py-3 text-[11px] leading-[1.5] whitespace-pre text-zinc-800"
           style={{ fontFamily: '"Courier New", Courier, ui-monospace, monospace' }}
         >
           {body}
