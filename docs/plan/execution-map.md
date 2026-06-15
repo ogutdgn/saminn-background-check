@@ -32,24 +32,32 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 0: Foundation (wrapping up) → Phase 1: Scaffold (next)
-> **Phase 0 is essentially DONE.** Deployment (on-prem server), stack (Python/FastAPI + React,
-> SSE, SQLite), and architecture (adapter + contract + orchestrator) are decided and written;
-> the 7 sources are reconned and tiered (6 proven 🟢, Fannin 🟡); the add-a-source **pipeline**
-> and this plan-tracking system are in place. See the 2026-06-10 entry in [last-point.md](last-point.md).
+## CURRENT PHASE → Phase 1: Scaffold (in progress)
+> **Phase 0 is DONE.** Deployment, stack, and architecture decided; sources reconned + tiered;
+> the add-a-source pipeline + plan-tracking in place. (2026-06-10 entry in [last-point.md](last-point.md).)
 >
-> **Phase 1 (Scaffold) is next.** Order:
-> - [ ] Backend project setup (deps/venv, `pyproject.toml`, `pytest`).
-> - [ ] **The contract:** `backend/adapters/base.py` (Pydantic `InmateRecord`/`AdapterResult`/`Adapter`) + `registry.py`. **Lock it — this is the keystone.**
-> - [ ] **Core engine:** `orchestrator.py` (fan-out + SSE-yield + timeout/isolation), `browser.py` (shared Playwright pool + queue), `cache.py` (SQLite TTL), `audit.py` (SQLite append-only).
+> **Phase 1 (Scaffold) — progress (2026-06-14):**
+> - [x] Backend project setup (`.venv`, `pyproject.toml`, `pytest`).
+> - [x] **The contract:** `backend/adapters/base.py` (InmateRecord/AdapterResult/Adapter + structured `SearchQuery`) + `registry.py`. **Locked v1 — validated against two real sources.**
+> - [x] **First two adapters early** (we pulled raw first): `tarrant.py` + `dallas.py`, fixture-tested, adversarially verified, registered **disabled**. (Stage 2–3.)
+> - [ ] **Core engine:** `orchestrator.py` (fan-out + SSE-yield + timeout/isolation) + `audit.py`. (`browser.py`, `cache.py` deferred until a source needs them.)
 > - [ ] **API:** `backend/web/app.py` with `POST /api/search` SSE.
-> - [ ] **Frontend:** Vite + TS scaffold, SSE client, one source card; types generated from OpenAPI.
-> - [ ] **Vertical slice:** one **stub adapter** end-to-end (search → orchestrator → SSE → card) to prove the whole spine before real sources.
+> - [ ] **Frontend:** Vite + TS scaffold, SSE client, one source card; types from OpenAPI.
+> - [ ] **Vertical slice:** search → orchestrator → SSE → card, end-to-end (using the real Tarrant/Dallas adapters).
 >
-> **Still open before Phase 1 starts:** team-size confirmation + the team-division doc (so the
-> Phase-1 subsystems and Phase-2 counties get owners).
+> **Loose ends:** sync `ARCHITECTURE.md` contract spec to the structured `SearchQuery`; Dallas
+> pagination is a Stage-4 blocker. Team-size question resolved: **solo** (no team-division doc).
 
 ## Daily work log
+
+### 2026-06-14
+- [x] Stage-1 raw pulls (live): **Tarrant** (JSON jTable, 3-call flow + base64 mugshot) and **Dallas** (HTML court search, disclaimer gate, dispositions, no mugshots). Fixtures + spike notes committed.
+- [x] Locked the **v1 contract** (`base.py`) with a **structured `SearchQuery`**; registry + sanity tests. Committed.
+- [x] Built + fixture-tested **Tarrant** and **Dallas** adapters (Stage 2–3); registered disabled.
+- [x] **Adversarial verification workflow** (3 agents) — caught + fixed a real Dallas grouping bug (masked-DOB merge/split → one record per case-row), `total=None`, Tarrant sex→None. 19 tests pass. Committed.
+- [x] Carried over from 06-10: team size **resolved (solo)** → team-division doc dropped; foundation + plan docs committed.
+- [ ] Orchestrator + audit log → API SSE → frontend card → vertical slice.
+- [ ] Sync `ARCHITECTURE.md` `SearchQuery`; resolve Dallas pagination (Stage-4 blocker).
 
 ### 2026-06-10
 - [x] Reviewed the existing demo (Next.js + Python versions) and extracted the reusable **knowledge** (source tiers, per-site gotchas) rather than the code.

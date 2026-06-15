@@ -7,6 +7,43 @@
 
 ---
 
+## 2026-06-14 — Phase 1: contract locked, Tarrant + Dallas adapters built & verified
+
+- **Branch:** `source/tarrant` (foundation + adapters committed; not yet merged to `main`).
+- **Phase:** **Phase 1 (Scaffold) — in progress.** Contract done; first two adapters done
+  (Stage 2–3). Orchestrator / API / frontend still to come.
+- **State summary:** Pivoted to "pull raw first, then lock the contract from real data."
+  Pulled Tarrant (JSON) + Dallas (HTML) raw, built both adapters TDD against captured
+  fixtures, and adversarially verified them. The one contract held across both opposite
+  structures (jail JSON vs court HTML).
+- **Done this session:**
+  - **Stage-1 raw pulls** (live `curl`): Tarrant Sheriff jTable (list → detail base64 mugshot
+    → bookings charges; gotcha: `raceId=All`/`sexId=Both` required) and Dallas Criminal
+    Background Search (disclaimer-`captcha` gate → `searchByName`; court records → has
+    dispositions, NO mugshots). Fixtures captured (git-ignored PII) + spike notes committed.
+  - **Contract locked (v1):** `backend/adapters/base.py` — InmateRecord/Charge/AdapterResult/
+    Adapter ABC/AdapterContext + a **structured `SearchQuery`** (last required + optional
+    first/middle/sex/year_of_birth) replacing `name:str`. Registry + sanity tests.
+  - **Adapters (Stage 2–3):** `tarrant.py` (lazy charge/photo hydration) + `dallas.py`
+    (session flow, one record per case-row). Fixture-pinned via httpx MockTransport. Both
+    registered **disabled**.
+  - **Adversarial review** (3-agent workflow) caught a real grouping bug Dallas's own test
+    missed (masked-DOB merge/split). Fixed → one record per case-row; `total=None`; Tarrant
+    sex→None on unrecognized. Regression tests added. **19 tests pass.**
+  - **Decisions:** solo (no team-division doc); **accuracy is the #1 requirement** (fail-loud,
+    fixture-pinned, never fabricate); AI free-text search **deferred** (local-only,
+    human-confirmed); **search broad + rank client-side** over trusting dirty per-site filters.
+- **Next:**
+  - **Orchestrator** (fan-out + per-source timeout + failure isolation + yield-as-it-lands) + audit log.
+  - FastAPI `/api/search` SSE → React/Vite frontend + one card → the vertical slice.
+  - **Sync `ARCHITECTURE.md`** contract spec to the new structured `SearchQuery`.
+  - **Dallas Stage-4 blocker:** pagination (needs a real multi-page fixture before enabling).
+- **Blockers/notes:** Dallas pagination unresolved (adapter stays disabled). Python 3.14 +
+  no `uv` → used `venv`+`pip`. Commit `Co-Authored-By` trailer intentionally omitted (project
+  commit-style overrides the global default).
+
+---
+
 ## 2026-06-10 — Foundation: decisions locked, sources reconned, docs + pipeline written
 
 - **Branch:** `main` (foundation docs staged on a `docs/foundation` branch for PR — not yet committed at time of writing).
