@@ -7,6 +7,46 @@
 
 ---
 
+## 2026-06-15 (3rd session) — Hunt live + adversarial review: Phase 2 now 4 of ~6
+
+- **Branch:** `source/hunt` (off `source/odcr`; not merged to `main`).
+- **Phase:** **Phase 2 (Sources) — 4 of ~6 live** (Tarrant, Dallas, ODCR, **Hunt**).
+- **State summary:** Built **Hunt County** end-to-end (add-a-source Stage 1→4), verified live, then
+  ran an **adversarial multi-agent review** over both new adapters (Hunt + ODCR) and folded the
+  confirmed fixes back in. Re-verified Hunt and ODCR both work properly (the user's explicit ask).
+- **Done this session:**
+  - **Stage 1 (spike, live):** discovered Hunt has **no server-side name search** — `results.asp`
+    (POST, `limit≤500`) returns the *whole* current roster, so the adapter **filters by surname
+    client-side**. Per-inmate detail via `booking.asp` (POST `partyID`/`jailingID`/`releaseDate`)
+    → **mugshot + charges + personal details**; wrong fields → "Invalid Form Sent". Fixtures +
+    notes (`backend/tests/fixtures/hunt/README.md`).
+  - **Stage 2 (adapter):** `backend/adapters/hunt.py` (Tier 2, http). Roster pull + `_surname_matches`
+    (prefix / compound-token / punctuation-normalized), `fetch_detail` (mugshot base64 + charges +
+    personal), `detail_id = "<party>-<jail>"`, **fail-loud** on a missing `#bookings` table. No DOB
+    anywhere. Registered + enabled.
+  - **Stage 3 (tests):** `backend/tests/test_hunt.py` — 16 tests; **full suite 66 pass** (was 49).
+  - **Stage 4 (enable + verify, live):** orchestrator (Hunt OK, 3× GONZALEZ, ~220 ms) + live
+    `fetch_detail` (42 KB mugshot + 3 charges). Frontend: added `"hunt"` to `IMAGE_SOURCES` so
+    mugshots auto-load like Tarrant; `tsc` clean.
+  - **Both sources re-verified:** Hunt + ODCR run together fine (0.2–2.4 s). A one-off ODCR 30 s
+    timeout was **not reproducible** (4 follow-up runs OK) — handled by per-source timeout + isolation.
+  - **Adversarial review (Workflow, 20 agents):** 6 reviewers (2 adapters × correctness/contract/
+    accuracy) → 2 skeptics per finding. **7 findings, all confirmed, all on Hunt; ODCR came back
+    clean.** Fixed: (1) mark `partial` when the roster hit the server cap — even on a no-match;
+    (2) `fetch_detail` returns None on an empty-name detail (fail loud, no empty identity);
+    (3) charges-table detection requires its specific columns; (4) surname match normalizes
+    apostrophes/periods (O'BRIEN ~ OBRIEN); (5) added the missing **TIMEOUT** test to hunt + odcr;
+    (6) documented the deliberate choice to keep in-custody rows that can't be deep-linked (dropping
+    a real inmate would be a worse, false-negative error).
+- **Next:** **Denton** (T3, stateful Tyler) or **Collin** (T4 → build the shared `browser.py`).
+  **Branch hygiene:** merge `source/odcr` + `source/hunt` + the everything-branch to `main`
+  (debt is growing — 4 stacked source branches now). Loose ends unchanged (Dallas latency/parser;
+  `IMAGE_SOURCES`→backend photo-capability flag).
+- **Blockers/notes:** none for Hunt. Hunt's roster has no pagination yet (population ~314 << 500
+  cap, so `partial` correctly signals the rare overflow); add roster paging if it ever nears 500.
+
+---
+
 ## 2026-06-15 (2nd session) — ODCR live: Phase 2 now 3 of ~6 sources
 
 - **Branch:** `source/odcr` (off the `source/tarrant*` everything-branch; not merged to `main`).

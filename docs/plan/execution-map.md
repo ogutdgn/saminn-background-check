@@ -32,7 +32,7 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 2: Sources (in progress) — 3 of ~6 live
+## CURRENT PHASE → Phase 2: Sources (in progress) — 4 of ~6 live
 > **Phase 0 ✅** and **Phase 1 ✅** (the vertical slice runs end to end). Dated entries in [last-point.md](last-point.md).
 >
 > **Phase 1 (Scaffold) — core COMPLETE; 2 infra pieces deferred *by design* (not unfinished):**
@@ -43,7 +43,8 @@
 > **Phase 2 (Sources) — in progress:**
 > - [x] Tarrant (T1, http) · [x] Dallas (T2, http) — both live, with photos / case-sheet detail-on-demand.
 > - [x] **ODCR (T2, OK statewide)** — live on `source/odcr`; one adapter for 70+ OK counties.
-> - [ ] Hunt (T2) · [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
+> - [x] **Hunt (T2)** — live on `source/hunt`; Sheriff roster + mugshot/charges detail (image source).
+> - [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
 >
 > **Loose ends:** [x] `ARCHITECTURE.md` contract synced (2026-06-15). Open: tune Dallas paging latency
 > (~18 s, worse with a first name — timed out at 30 s on SMITH/JOHN); tighten the Dallas name/DOB parser;
@@ -64,7 +65,14 @@
 - [x] **Stage 2 adapter** `adapters/odcr.py` (Tier 2, http): one record per case-row, ` - ST ` offense/disposition split (full text kept), `matched_on=NAME`+party role, stable `/detail` deep link; **no DOB/sex/photo** (court index). Registered disabled.
 - [x] **Stage 3 tests** `test_odcr.py` (11): parsing, count, no-results, party-string, dedup pagination, max_results/time-budget `partial`, error isolation. **Full suite 49 pass** (was 38).
 - [x] **Stage 4 enable + verify:** flipped enabled; verified live through the **orchestrator** (552 ms, OK, total=1000, partial) and the **SSE API** (`POST /api/search` → ODCR `result` event). Streams independently (Dallas timed out on the same query; ODCR unaffected). SOURCES.md → ODCR/Tarrant/Dallas `done`.
-- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · `IMAGE_SOURCES`→backend flag · merge `source/odcr` + everything-branch to `main` · **next source: Hunt (T2, quickest) or Denton (T3)**.
+**(3rd session) — Hunt source, full pipeline on `source/hunt`:**
+- [x] **Stage 1 spike (live):** proved the Hunt pull. Key discovery: **no server-side name search** — `results.asp` (POST, `limit≤500`) returns the *whole* current roster; we filter by surname client-side. Per-inmate detail via `booking.asp` (POST `partyID`/`jailingID`/`releaseDate`) → **mugshot + charges + personal details**; wrong fields → "Invalid Form Sent". Fixtures + notes `backend/tests/fixtures/hunt/README.md`.
+- [x] **Stage 2 adapter** `adapters/hunt.py` (Tier 2, http): roster pull + `_surname_matches` (prefix/compound-token), `fetch_detail` (mugshot base64 + charges + personal), `detail_id="<party>-<jail>"`, fail-loud on missing table. **No DOB anywhere.** Registered.
+- [x] **Stage 3 tests** `test_hunt.py` (16, incl. review-driven): field mapping, surname filter edges (incl. apostrophes), OK/no-match/capped-partial/error/timeout, fetch_detail (mugshot+charges), invalid-form/empty-name/bad-id → None, + real-capture smoke tests. **Full suite 66 pass** (was 49).
+- [x] **Stage 4 enable + verify:** enabled; verified live — orchestrator (Hunt OK 3×GONZALEZ 233 ms) + live `fetch_detail` (42 KB mugshot + 3 charges). Frontend: added `"hunt"` to `IMAGE_SOURCES` (mugshots auto-load like Tarrant); `tsc` clean.
+- [x] **Re-verified ODCR + Hunt together** (orchestrator): both OK ~0.2–2.4 s. One transient ODCR 30 s timeout on first run was **not reproducible** (4 subsequent runs fine) — handled by per-source timeout + isolation.
+- [x] **Adversarial multi-agent review** (Workflow: 6 reviewers × 2 skeptics, 20 agents) of hunt.py + odcr.py → 7 findings, all on **Hunt** (ODCR clean). Fixed: partial-flag on a server-capped roster (even no-match), fail-loud on empty-name detail, specific charges-table detection, apostrophe/period surname recall (O'BRIEN~OBRIEN); added the missing TIMEOUT test (hunt + odcr); documented the deliberate keep-undeep-linkable-rows choice. **Full suite 66 pass.**
+- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · `IMAGE_SOURCES`→backend flag · merge `source/odcr`+`source/hunt`+everything-branch to `main` · **next source: Denton (T3) or Collin (T4 → `browser.py`)**.
 
 ### 2026-06-14
 - [x] Stage-1 raw pulls (live): **Tarrant** (JSON jTable, 3-call flow + base64 mugshot) and **Dallas** (HTML court search, disclaimer gate, dispositions, no mugshots). Fixtures + spike notes committed.
