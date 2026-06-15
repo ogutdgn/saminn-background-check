@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
+import { Loader2 } from "lucide-react"
 import type { AdapterResult } from "@/api/types"
 import { search } from "@/api/search"
 import { SourceCard } from "@/components/SourceCard"
@@ -78,7 +79,14 @@ export default function App() {
           />
         </div>
         <Button type="submit" disabled={!last.trim() || searching}>
-          {searching ? "Searching…" : "Search"}
+          {searching ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Searching…
+            </>
+          ) : (
+            "Search"
+          )}
         </Button>
       </form>
 

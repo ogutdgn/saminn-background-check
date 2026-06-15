@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { ImageOff, Loader2 } from "lucide-react"
 import type { AdapterResult, Charge, InmateRecord } from "@/api/types"
 import { fetchDetail } from "@/api/detail"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,9 +32,8 @@ function titleCase(id: string): string {
 }
 
 // Sources whose detail includes a mugshot — auto-load it at search for the identity scan.
-// (A display hint; ideally the backend advertises photo capability per source.)
 const IMAGE_SOURCES = new Set(["tarrant"])
-const AUTO_PHOTO_CAP = 12 // auto-load photos for at most this many rows per image source
+const AUTO_PHOTO_CAP = 12
 const CONCURRENCY = 3
 
 function detailId(rec: InmateRecord): string | null {
@@ -50,6 +50,47 @@ function photoSrc(p?: string | null): string | undefined {
   return p ? `data:image/jpeg;base64,${p}` : undefined
 }
 
+/** Fixed-size image slot: photo, spinner while loading, "No image" once confirmed none,
+ *  or a faint placeholder when the photo simply hasn't been fetched yet. */
+function PhotoSlot({
+  photo,
+  loading,
+  fetched,
+  size,
+}: {
+  photo?: string | null
+  loading?: boolean
+  fetched?: boolean // true once detail was fetched (so "no photo" really means none)
+  size: "sm" | "lg"
+}) {
+  const box = size === "lg" ? "h-40 w-32" : "h-16 w-12"
+  if (photo) {
+    return (
+      <img
+        src={photoSrc(photo)}
+        alt="Booking photo"
+        className={`${box} shrink-0 rounded border object-cover`}
+      />
+    )
+  }
+  return (
+    <div
+      className={`bg-muted text-muted-foreground flex ${box} shrink-0 flex-col items-center justify-center gap-1 rounded border`}
+    >
+      {loading ? (
+        <Loader2 className="h-5 w-5 animate-spin" />
+      ) : fetched ? (
+        <>
+          <ImageOff className="h-4 w-4" />
+          <span className="text-[9px] leading-none">No image</span>
+        </>
+      ) : (
+        <ImageOff className="h-4 w-4 opacity-40" />
+      )}
+    </div>
+  )
+}
+
 export function SourceCard({
   id,
   result,
@@ -61,16 +102,16 @@ export function SourceCard({
 }) {
   const title = result?.display_name ?? titleCase(id)
   const records = result?.records ?? []
+  const imageSource = IMAGE_SOURCES.has(id)
 
   const [details, setDetails] = useState<Record<string, InmateRecord>>({})
   const [openRec, setOpenRec] = useState<InmateRecord | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
 
-  // search-time profile photos for image sources (first N rows, bounded concurrency)
   useEffect(() => {
     setDetails({})
     setOpenRec(null)
-    if (!result || !IMAGE_SOURCES.has(id)) return
+    if (!result || !imageSource) return
     const ids = records.map(detailId).filter((x): x is string => !!x).slice(0, AUTO_PHOTO_CAP)
     if (ids.length === 0) return
     let cancelled = false
@@ -114,7 +155,8 @@ export function SourceCard({
                 {STATUS_LABEL[result.status] ?? result.status}
               </Badge>
             ) : pending ? (
-              <Badge variant="outline" className="animate-pulse">
+              <Badge variant="outline" className="gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
                 Searching…
               </Badge>
             ) : null}
@@ -153,6 +195,8 @@ export function SourceCard({
                 key={i}
                 rec={rec}
                 photo={rid ? details[rid]?.photo_base64 : undefined}
+                fetched={!!(rid && details[rid])}
+                showPhoto={imageSource}
                 hasDetail={!!rid}
                 onOpen={() => openDetail(rec)}
               />
@@ -168,6 +212,7 @@ export function SourceCard({
               rec={openRec}
               detail={openDetailRec}
               loading={loadingDetail}
+              imageSource={imageSource}
               sourceTitle={title}
             />
           )}
@@ -180,11 +225,15 @@ export function SourceCard({
 function RecordRow({
   rec,
   photo,
+  fetched,
+  showPhoto,
   hasDetail,
   onOpen,
 }: {
   rec: InmateRecord
   photo?: string | null
+  fetched: boolean
+  showPhoto: boolean
   hasDetail: boolean
   onOpen: () => void
 }) {
@@ -197,13 +246,7 @@ function RecordRow({
   return (
     <div className="rounded-md border p-3">
       <div className="flex gap-3">
-        {photo && (
-          <img
-            src={photoSrc(photo)}
-            alt={`Booking photo — ${rec.name}`}
-            className="h-16 w-12 shrink-0 rounded border object-cover"
-          />
-        )}
+        {showPhoto && <PhotoSlot photo={photo} fetched={fetched} size="sm" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div className="text-sm font-medium">{rec.name}</div>
@@ -246,11 +289,13 @@ function DetailView({
   rec,
   detail,
   loading,
+  imageSource,
   sourceTitle,
 }: {
   rec: InmateRecord
   detail?: InmateRecord
   loading: boolean
+  imageSource: boolean
   sourceTitle: string
 }) {
   const name = detail?.name || rec.name
@@ -260,6 +305,8 @@ function DetailView({
   const charges: Charge[] = (detail?.charges?.length ? detail.charges : rec.charges) ?? []
   const sheet = rawText(detail, "detail_text")
   const meta = [yob ? `b. ${yob}` : null, sex].filter(Boolean).join(" · ")
+  // show the portrait slot for image sources, or once we've fetched detail (so "No image" is true)
+  const showPortrait = imageSource || !!photo || (!loading && !!detail)
 
   return (
     <>
@@ -272,20 +319,14 @@ function DetailView({
       </DialogHeader>
 
       <div className="flex gap-4">
-        {photo ? (
-          <img
-            src={photoSrc(photo)}
-            alt={`Booking photo — ${name}`}
-            className="h-40 w-32 shrink-0 rounded border object-cover"
-          />
-        ) : loading ? (
-          <Skeleton className="h-40 w-32 shrink-0 rounded" />
-        ) : null}
+        {showPortrait && <PhotoSlot photo={photo} loading={loading} fetched={!!detail} size="lg" />}
 
         <div className="min-w-0 flex-1 space-y-2">
           <div className="text-sm font-medium">Charges</div>
           {loading && charges.length === 0 && (
-            <p className="text-muted-foreground text-sm">Loading details…</p>
+            <p className="text-muted-foreground flex items-center gap-2 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading details…
+            </p>
           )}
           {!loading && charges.length === 0 && (
             <p className="text-muted-foreground text-sm">No charges listed.</p>
@@ -316,14 +357,34 @@ function DetailView({
         </div>
       </div>
 
-      {sheet && (
-        <div className="mt-2">
-          <div className="mb-1 text-sm font-medium">Court case sheet</div>
-          <pre className="bg-muted max-h-72 overflow-auto rounded-md p-3 font-mono text-[11px] leading-snug whitespace-pre-wrap">
-            {sheet}
-          </pre>
+      {loading && !sheet && (
+        <div className="text-muted-foreground mt-3 flex items-center gap-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" /> Fetching the court case sheet…
         </div>
       )}
+      {sheet && <CaseSheet text={sheet} />}
     </>
+  )
+}
+
+/** Render the court case sheet to look like the real document, not plain text. */
+function CaseSheet({ text }: { text: string }) {
+  // drop the leading title line — we put it in the document header bar instead
+  const body = text.replace(/^Dallas County[^\n]*\n/i, "")
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-sm font-medium">Court case sheet</div>
+      <div className="overflow-hidden rounded-md border border-zinc-300 shadow-sm">
+        <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide text-zinc-700 uppercase">
+          Dallas County · Felony &amp; Misdemeanor Courts · Case Information
+        </div>
+        <pre
+          className="max-h-80 overflow-auto bg-[#fcfbf6] px-4 py-3 text-[11px] leading-[1.5] whitespace-pre text-zinc-800"
+          style={{ fontFamily: '"Courier New", Courier, ui-monospace, monospace' }}
+        >
+          {body}
+        </pre>
+      </div>
+    </div>
   )
 }
