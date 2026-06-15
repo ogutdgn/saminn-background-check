@@ -73,8 +73,10 @@ Three consequences, baked into the design:
 ## The shared contract (the most important thing in the repo)
 
 Every adapter returns the identical shape. This file (`backend/adapters/base.py`)
-is created in the first implementation phase and changes rarely; a change to it
-ripples to everyone, so it goes through the lead. The canonical spec:
+was built in Phase 1 and validated against Tarrant + Dallas. It changes rarely and
+only through review — a change ripples to everyone. Since v1 it has gained (additively)
+the structured `SearchQuery`, `AdapterResult.partial`, and the optional
+`Adapter.fetch_detail` hook. The canonical spec:
 
 ```python
 # backend/adapters/base.py  (spec — created in Phase 1, shown here as the contract)
@@ -122,12 +124,22 @@ class AdapterResult(BaseModel):
     display_name: str
     status: AdapterStatus
     records: list[InmateRecord] = []
-    total: int | None = None
+    total: int | None = None       # source-reported total (may exceed len(records))
+    partial: bool = False          # results capped (time/page budget) — more exist
     duration_ms: int
     error: str | None = None
 
+class Sex(str, Enum):
+    MALE = "M"
+    FEMALE = "F"
+    UNKNOWN = "U"
+
 class SearchQuery(BaseModel):
-    name: str
+    last: str                      # the only required field — every source searches by surname
+    first: str | None = None
+    middle: str | None = None
+    sex: Sex | None = None
+    year_of_birth: int | None = None  # int in; InmateRecord.year_of_birth is str (preserve source)
     max_results: int = 25
 
 class Adapter(ABC):
@@ -139,10 +151,16 @@ class Adapter(ABC):
     @abstractmethod
     async def search(self, query: SearchQuery, ctx: "AdapterContext") -> AdapterResult:
         ...
+
+    # Optional, lazy per-record detail (Tarrant CID -> mugshot + charges; Dallas
+    # case# -> court case sheet). Default None = the source has no extra detail.
+    async def fetch_detail(self, record_id: str, ctx: "AdapterContext") -> InmateRecord | None:
+        return None
 ```
 
 The frontend mirrors `InmateRecord` / `AdapterResult` as TypeScript types,
-ideally generated from FastAPI's OpenAPI schema so they never drift.
+**generated** from FastAPI's OpenAPI schema (`frontend/src/api/schema.ts`, via
+`npm run gen:api`) so they never drift.
 
 ### Why `matched_on` matters
 
