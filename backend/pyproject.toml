@@ -1,0 +1,30 @@
+[project]
+name = "saminn-backend"
+version = "0.1.0"
+description = "Single-name background search for The Samaritan Inn intake — adapters + orchestrator + SSE API."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",   # the data contract (base.py) + API schema
+    "httpx>=0.27",     # async HTTP for the http-tier adapters
+    "selectolax>=0.3.21",  # fast HTML parsing for HTML-tier sources (e.g. Dallas)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",  # adapters are async
+]
+
+# Run the suite from this directory: `pytest`. `pythonpath=["."]` makes the
+# `adapters` / `core` / `web` packages importable without an install step.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["adapters", "core", "web"]
