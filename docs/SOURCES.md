@@ -32,7 +32,7 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Tarrant County, TX** | Sheriff inmate roster JSON API (`inmatesearch.tarrantcounty.com`) | 1 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Dallas County, TX** | Criminal Background Search (HTML form POSTs) | 2 | http | none | — | 🟢 proven | **done** |
-| **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | TBD | 🟢 proven (live roster pulled) | todo |
+| **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | reCAPTCHA v3 (invisible, non-blocking) | — | 🟢 proven (1000 results) | **done** |
 | **Denton County, TX** | Tyler Public Access, *self-hosted* (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (datacenter IPs may be challenged) | — | 🟢 proven | todo |
 | **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes with stealth, today) | ✅ mugshots | 🟢 proven | todo |
@@ -44,7 +44,12 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
   court portal (that one is Tier-5 WAF-blocked). Current-custody only.
 - **Hunt** — The county's `*.tylertech.cloud` *court* portal is Tier-5 blocked, but
   the Sheriff's `apps.huntcounty.net/jail/` booking system is wide open Classic ASP
-  (`results.asp`). Same pattern as Tarrant.
+  (`results.asp`). Same pattern as Tarrant. **Live (`adapters/hunt.py`).** Key quirk:
+  **no server-side name search** — `results.asp` (POST, `limit≤500`) returns the *whole*
+  current roster, so the adapter **filters by surname client-side**. Per-inmate detail
+  (`booking.asp`, POST `partyID`/`jailingID`/`releaseDate`) yields **mugshot + charges +
+  personal details**, pulled lazily via `fetch_detail` (Hunt is an image source like
+  Tarrant). No DOB anywhere. Spike notes: `backend/tests/fixtures/hunt/README.md`.
 - **Oklahoma / ODCR** — OSCN (the state docket site) is Tier-5 Cloudflare-Turnstile
   blocked. **ODCR is the parallel system and it's open.** It covers most OK counties
   in one adapter, which makes it high-value. Best practice is to search both OSCN
