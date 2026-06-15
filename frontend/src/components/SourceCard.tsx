@@ -385,21 +385,36 @@ function DetailView({
           <span className="text-xs">(the county site is slow — this can take 10–15s)</span>
         </div>
       )}
-      {sheet && <CaseSheet text={sheet} />}
+      {sheet && <CaseSheet text={sheet} source={rec.source} sourceTitle={sourceTitle} />}
     </>
   )
 }
 
-/** Render the court case sheet to look like the real document, not plain text. */
-function CaseSheet({ text }: { text: string }) {
-  // drop the leading title line — we put it in the document header bar instead
-  const body = text.replace(/^Dallas County[^\n]*\n/i, "")
+/** Render a court case sheet to look like the real document, not plain text. */
+const CASE_SHEET_HEADERS: Record<string, string> = {
+  dallas: "Dallas County · Felony & Misdemeanor Courts · Case Information",
+  odcr: "Oklahoma · On Demand Court Records · Case Record",
+}
+
+function CaseSheet({
+  text,
+  source,
+  sourceTitle,
+}: {
+  text: string
+  source: string
+  sourceTitle: string
+}) {
+  const header = CASE_SHEET_HEADERS[source] ?? `${sourceTitle} · Case Record`
+  // Dallas repeats its county name as the first line — drop it (the header bar shows it). Other
+  // sources put meaningful content on line 1 (e.g. the ODCR case caption), so keep it.
+  const body = source === "dallas" ? text.replace(/^Dallas County[^\n]*\n/i, "") : text
   return (
     <div className="mt-3">
       <div className="mb-1 text-sm font-medium">Court case sheet</div>
       <div className="overflow-hidden rounded-md border border-zinc-300 shadow-sm">
         <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide text-zinc-700 uppercase">
-          Dallas County · Felony &amp; Misdemeanor Courts · Case Information
+          {header}
         </div>
         <pre
           className="max-h-[60vh] overflow-auto bg-[#fcfbf6] px-4 py-3 text-[11px] leading-[1.5] whitespace-pre text-zinc-800"
