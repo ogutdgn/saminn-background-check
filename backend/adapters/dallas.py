@@ -1,0 +1,171 @@
+"""Dallas County — Criminal Background Search (Tier 2, http).
+
+Court case info (felony + misdemeanor) at dallascounty.org/criminalBackgroundSearch.
+HTML, not JSON. Court records → has dispositions, has NO mugshots. Session flow +
+gotchas: backend/tests/fixtures/dallas/README.md.
+
+Flow: GET / (sets JSESSIONID, serves a disclaimer gate misleadingly named "captcha"
+but NOT a CAPTCHA) → POST /captcha (Continue) → POST /searchByName. Results are one
+row per charge/case; we group rows into one record per person (keyed on name + DOB
+token), each carrying its charges.
+
+Accuracy notes: `year_of_birth` is left None — Dallas DOB is a 2-digit-year MMDDYY,
+often masked (000000), so the century is ambiguous; we don't guess. The raw token is
+kept in `raw["dob"]`. We search as Defendant (nameType=DF) → `matched_on = NAME`. The
+`ARC` flag is preserved in `Charge.extra` but not interpreted as alias without proof.
+"""
+from __future__ import annotations
+
+import httpx
+from selectolax.parser import HTMLParser
+
+from .base import (
+    Adapter,
+    AdapterContext,
+    AdapterResult,
+    AdapterStatus,
+    Charge,
+    InmateRecord,
+    MatchInfo,
+    MatchType,
+    SearchQuery,
+    Sex,
+)
+
+_BASE = "https://www.dallascounty.org/criminalBackgroundSearch"
+_NO_RESULTS_MARKER = "No records were found"
+
+
+class DallasAdapter(Adapter):
+    id = "dallas"
+    display_name = "Dallas County"
+    transport = "http"
+    tier = 2
+
+    async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
+        start = ctx.now_ms()
+        try:
+            # 1. disclaimer gate — GET sets the session, POST "Continue" accepts it.
+            await ctx.http.get(f"{_BASE}/", timeout=ctx.timeout_s)
+            await ctx.http.post(f"{_BASE}/captcha", data={"submit": "Continue"}, timeout=ctx.timeout_s)
+            # 2. the actual name search (as Defendant; blank race/sex = "any").
+            form = {
+                "lastName": query.last.upper(),
+                "firstName": (query.first or "").upper(),
+                "middleName": (query.middle or "").upper(),
+                "nameType": "DF",
+                "race": " ",
+                "sex": self._sex_param(query.sex),
+                "dobMonth": "", "dobDay": "", "dobYear": "",
+                "numberType": "", "pending": "",
+                "searchbyname": "Search By Name",
+            }
+            resp = await ctx.http.post(f"{_BASE}/searchByName", data=form, timeout=ctx.timeout_s)
+            resp.raise_for_status()
+            html = resp.text
+
+            if self._is_no_results(html):
+                return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
+            records = self._parse_results(html)
+            if not records:
+                # not the known "no records" page, yet nothing parsed -> fail loud
+                raise ValueError("results page had no parseable rows and no no-records marker")
+            # total is None: Dallas reports no count, and results may span pages we don't
+            # yet follow (Stage-4 blocker) — so we never claim len(records) is the total.
+            return self._envelope(AdapterStatus.OK, records, None, start)
+        except httpx.TimeoutException as e:
+            return self._fail(AdapterStatus.TIMEOUT, start, str(e))
+        except Exception as e:  # never raise out of search()
+            return self._fail(AdapterStatus.ERROR, start, str(e))
+
+    # -- pure parsers (fixture-tested) ------------------------------------
+
+    def _parse_results(self, html: str) -> list[InmateRecord]:
+        # One record PER case-row — deliberately NO person-level grouping here.
+        # Dallas's list has no reliable person key: the DOB is frequently masked
+        # ("000000"), so grouping on (name, DOB) both wrongly SPLITS one person across
+        # masked/unmasked rows and wrongly MERGES two distinct same-name people who
+        # both have a masked DOB (dropping one's sex, misattributing charges). Either
+        # is "silently wrong". Person-level dedup is deferred to the client-side
+        # ranking layer, which can weigh confidence and a human confirms identity.
+        table = HTMLParser(html).css_first("table.table-striped")
+        if table is None:
+            return []
+        # columns: [ln#, LN(name), ARC, RS, DOB, CASE/BOND, CT, CHARGE, DISP]
+        out: list[InmateRecord] = []
+        for row in table.css("tr"):
+            cells = row.css("td")
+            if len(cells) < 9:
+                continue  # header / spacer
+            v = [c.text(strip=True) for c in cells]
+            _ln, name_raw, arc, rs, dob, case_bond, ct, charge_txt, disp = v[:9]
+            name = " ".join(name_raw.split())
+            if not name:
+                continue
+            link = row.css_first("a[href*=defendant_detail]")
+            out.append(
+                InmateRecord(
+                    source=self.id,
+                    name=name,
+                    year_of_birth=None,  # masked/2-digit DOB -> don't guess a year
+                    sex=self._parse_sex(rs),
+                    matched_on=[MatchInfo(type=MatchType.NAME)],
+                    charges=[
+                        Charge(
+                            offense=charge_txt or None,
+                            case_no=case_bond or None,
+                            disposition=disp or None,
+                            extra={"court": ct or None, "arc": arc or None},
+                        )
+                    ],
+                    raw={
+                        "rs": rs or None,
+                        "dob": dob or None,
+                        "detail_ln": link.attributes.get("href") if link else None,
+                        "row": v,
+                    },
+                )
+            )
+        return out
+
+    @staticmethod
+    def _is_no_results(html: str) -> bool:
+        return _NO_RESULTS_MARKER in html
+
+    # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _sex_param(sex: Sex | None) -> str:
+        if sex is Sex.MALE:
+            return "M"
+        if sex is Sex.FEMALE:
+            return "F"
+        return " "  # blank = any
+
+    @staticmethod
+    def _parse_sex(rs: str | None) -> str | None:
+        # RS is race+sex, e.g. "WM" (White Male), "UU" (Unknown). Sex is the 2nd char.
+        if not rs or len(rs) < 2:
+            return None
+        return {"M": "M", "F": "F"}.get(rs[1].upper(), "U")
+
+    def _envelope(
+        self, status: AdapterStatus, records: list[InmateRecord], total: int | None, start_ms: int
+    ) -> AdapterResult:
+        return AdapterResult(
+            source=self.id,
+            display_name=self.display_name,
+            status=status,
+            records=records,
+            total=total,
+            duration_ms=AdapterContext.now_ms() - start_ms,
+        )
+
+    def _fail(self, status: AdapterStatus, start_ms: int, error: str | None = None) -> AdapterResult:
+        return AdapterResult(
+            source=self.id,
+            display_name=self.display_name,
+            status=status,
+            duration_ms=AdapterContext.now_ms() - start_ms,
+            error=error,
+        )

@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import Adapter
+from .dallas import DallasAdapter
+from .tarrant import TarrantAdapter
 
 
 @dataclass
@@ -21,11 +23,11 @@ class RegistryEntry:
     enabled: bool = False
 
 
-# One line per source, added as each is built. Disabled until it goes live, e.g.:
-#     from .tarrant import TarrantAdapter
-#     RegistryEntry(TarrantAdapter()),                 # disabled (Stage 2)
-#     RegistryEntry(TarrantAdapter(), enabled=True),   # live     (Stage 4)
+# One line per source, added as each is built. Disabled until it goes live (Stage 4),
+# i.e. flip to `enabled=True` once it's verified end-to-end in the running app.
 REGISTRY: list[RegistryEntry] = [
+    RegistryEntry(TarrantAdapter()),   # Stage 2 — built + tested, not yet live
+    RegistryEntry(DallasAdapter()),    # Stage 2 — built + tested, not yet live
 ]
 
 

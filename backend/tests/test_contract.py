@@ -63,6 +63,7 @@ def test_adapter_result_serializes_enums_to_strings():
     assert data["records"][0]["charges"][0]["disposition"] == "DISM"
 
 
-def test_registry_starts_empty_and_nothing_enabled():
-    assert registry.all_adapters() == []
-    assert registry.enabled_adapters() == []
+def test_registry_holds_built_sources_none_enabled_yet():
+    ids = {a.id for a in registry.all_adapters()}
+    assert {"tarrant", "dallas"} <= ids        # built sources are registered
+    assert registry.enabled_adapters() == []   # but nothing goes live until Stage 4

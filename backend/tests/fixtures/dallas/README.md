@@ -28,7 +28,10 @@ Stateful within a `JSESSIONID` session. Three steps:
   Tarrant — do NOT send "All". Sending blanks is correct.
 - **`nameType`** = `DF` Defendant / `BN` Bondsman / `DD` Defense Attorney. **Search `DF`** for the
   person → this is the `matched_on` driver (searching `DD` would return attorney matches).
-- **Result is one row per charge/case** (name repeats) → group rows by person.
+- **Result is one row per charge/case** (name repeats). We deliberately do **NOT** group
+  rows into persons in the adapter — see "Known gaps" below.
+- **Pagination:** the results page has a `Page Down` control (`<form name="paging">`). Large
+  surnames span multiple pages.
 - **Detail page is session-stateful:** `GET defendant_detail?ln=<rownum>` where `ln` is the row's
   index *in the current search session* — not a stable ID. Must fetch in the same session, in order.
 - **Detail is a fixed-width mainframe text screen** (CICS-style, `&nbsp;`-padded), not clean table
@@ -58,6 +61,19 @@ Stateful within a `JSESSIONID` session. Three steps:
 | `CT`, reduced/enhanced, file date | `Charge.extra` |
 | `nameType=DF` search | `matched_on = [NAME]` (DD would be `ATTORNEY`); alias via `NAMES` section |
 | — | `photo_base64 = None` (no mugshots in court records) |
+
+## Known gaps & decisions (from adversarial review)
+
+- **No person-grouping in the adapter — one `InmateRecord` per case-row.** Dallas's list has no
+  reliable person key: the DOB is frequently masked (`000000`). Grouping on `(name, DOB)` would
+  both *split* one person across masked/unmasked rows (e.g. `SMITH JAMES DOUGLAS` rows with
+  `000000` vs `092256`) and *merge* two distinct same-name people who both have a masked DOB —
+  either is "silently wrong". So we emit one record per case and defer person-level dedup to the
+  client-side ranking layer (confidence + human review). Regression tests pin both cases.
+- **`total` is `None`** — Dallas reports no result count, and we don't yet page.
+- **🚧 Pagination is a Stage-4 (enable) blocker.** `search()` reads page 1 only; multi-page
+  surnames silently lose later pages. Need a real multi-page capture, then follow the `paging`
+  `Page Down` POST. The adapter stays **disabled** until this is handled.
 
 **Verified:** `lastName=SMITH` (Defendant) → multi-row results w/ dispositions; nonsense surname →
 "No records were found using the search criteria provided"; detail page pulled for row 01.
