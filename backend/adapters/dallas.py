@@ -44,8 +44,9 @@ class DallasAdapter(Adapter):
     transport = "http"
     tier = 2
 
-    max_pages = 15        # safety cap on the paging loop (bounded, human-paced)
-    page_delay_s = 0.2    # politeness pause between page fetches
+    max_pages = 15        # safety cap on the paging loop
+    page_delay_s = 0.05   # small politeness pause (Dallas has only a disclaimer gate, no WAF)
+    budget_margin_s = 3.0  # stop paging this long before the orchestrator's hard timeout
 
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
         start = ctx.now_ms()
@@ -73,11 +74,16 @@ class DallasAdapter(Adapter):
                 return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
             # Follow pagination: POST /paging (which=down) carrying the session cookie.
-            # Each page re-numbers rows 01.. and returns a fresh set, so we accumulate with
-            # a dedup set and stop when a page adds NO new rows (past the end / a repeat),
-            # we have enough distinct people (max_results), or we hit the safety cap.
+            # Each page re-numbers rows 01.. and returns a fresh set, so we accumulate with a
+            # dedup set. We stop when a page adds NO new rows (true end), or — when more results
+            # still exist — at max_results / the page cap / a TIME BUDGET. A common name like
+            # "John Smith" has hundreds of court records; without the budget, paging the whole
+            # session blows past the orchestrator's hard timeout and loses everything. When we
+            # stop early we mark the result `partial` so the UI can say "refine your search".
+            deadline = start + int(max(0.0, ctx.timeout_s - self.budget_margin_s) * 1000)
             records: list[InmateRecord] = []
             seen: set[tuple] = set()
+            partial = False
             for page in range(1, self.max_pages + 1):
                 added = 0
                 for rec in self._parse_results(html):
@@ -89,8 +95,15 @@ class DallasAdapter(Adapter):
                     records.append(rec)
                     added += 1
                 if added == 0:
-                    break  # nothing new on this page -> we're past the last page
+                    break  # nothing new on this page -> we've reached the true end (complete)
                 if self._distinct_names(records) >= query.max_results:
+                    partial = True  # capped at max_results — more may exist
+                    break
+                if AdapterContext.now_ms() >= deadline:
+                    partial = True  # out of time budget — more pages exist
+                    break
+                if page == self.max_pages:
+                    partial = True  # hit the page cap — more pages exist
                     break
                 if self.page_delay_s:
                     await asyncio.sleep(self.page_delay_s)
@@ -98,13 +111,13 @@ class DallasAdapter(Adapter):
                 nxt.raise_for_status()
                 html = nxt.text
                 if "defendant_detail" not in html:
-                    break  # no result links -> no further pages
+                    break  # next page has no result links -> reached the end (complete)
 
             if not records:
                 # had a result table but parsed nothing -> fail loud
                 raise ValueError("results page had no parseable rows and no no-records marker")
-            # total stays None: Dallas reports no count, and we cap at max_results.
-            return self._envelope(AdapterStatus.OK, records, None, start)
+            # total stays None (Dallas reports no count); `partial` signals if we capped.
+            return self._envelope(AdapterStatus.OK, records, None, start, partial=partial)
         except httpx.TimeoutException as e:
             return self._fail(AdapterStatus.TIMEOUT, start, str(e))
         except Exception as e:  # never raise out of search()
@@ -198,7 +211,13 @@ class DallasAdapter(Adapter):
         return len({r.name for r in records})
 
     def _envelope(
-        self, status: AdapterStatus, records: list[InmateRecord], total: int | None, start_ms: int
+        self,
+        status: AdapterStatus,
+        records: list[InmateRecord],
+        total: int | None,
+        start_ms: int,
+        *,
+        partial: bool = False,
     ) -> AdapterResult:
         return AdapterResult(
             source=self.id,
@@ -206,6 +225,7 @@ class DallasAdapter(Adapter):
             status=status,
             records=records,
             total=total,
+            partial=partial,
             duration_ms=AdapterContext.now_ms() - start_ms,
         )
 

@@ -55,6 +55,11 @@ export function SourceCard({
             {result.duration_ms} ms
           </p>
         )}
+        {result?.partial && (
+          <p className="text-xs font-medium text-amber-600">
+            Showing the first {records.length} — add a first name to narrow (more exist).
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-2">
         {pending && !result && (

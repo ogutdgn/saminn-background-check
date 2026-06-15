@@ -61,6 +61,11 @@ export interface components {
             records?: components["schemas"]["InmateRecord"][];
             /** Total */
             total?: number | null;
+            /**
+             * Partial
+             * @default false
+             */
+            partial: boolean;
             /** Duration Ms */
             duration_ms: number;
             /** Error */

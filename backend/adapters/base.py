@@ -87,6 +87,7 @@ class AdapterResult(BaseModel):
     status: AdapterStatus
     records: list[InmateRecord] = Field(default_factory=list)
     total: int | None = None             # source-reported total (may exceed len(records))
+    partial: bool = False                # True when results were capped (time/page budget) — more exist
     duration_ms: int
     error: str | None = None             # human-readable, set when status is ERROR
 

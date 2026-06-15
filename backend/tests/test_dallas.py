@@ -139,6 +139,7 @@ async def test_pagination_accumulates_across_pages_and_dedups():
         res = await adapter.search(SearchQuery(last="smith", max_results=100), AdapterContext(client))
 
     assert res.status == AdapterStatus.OK
+    assert res.partial is False                          # reached the true end (dedup), not capped
     assert len(res.records) == 54                       # 54 distinct rows across 3 pages
     assert {r.raw["page"] for r in res.records} == {1, 2, 3}
     names = {r.name for r in res.records}
@@ -165,5 +166,31 @@ async def test_pagination_stops_at_max_results_without_extra_fetches():
 
     # page 1 alone has >= 5 distinct people -> stop before fetching any further page
     assert res.status == AdapterStatus.OK
+    assert res.partial is True                  # capped at max_results -> more may exist
     assert adapter._distinct_names(res.records) >= 5
     assert calls["paging"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pagination_stops_at_time_budget_and_marks_partial():
+    # A tiny time budget: after page 1 we're already past the deadline -> stop, return the
+    # page-1 records as PARTIAL (never silently complete, never timed-out-to-zero).
+    calls = {"paging": 0}
+
+    def handler(request):
+        if request.url.path.endswith("/searchByName"):
+            return httpx.Response(200, content=PAGE1)
+        if request.url.path.endswith("/paging"):
+            calls["paging"] += 1
+            return httpx.Response(200, content=PAGE2)
+        return httpx.Response(200, content=b"ok")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        # timeout_s=0 -> deadline is "now", tripped right after page 1
+        res = await adapter.search(
+            SearchQuery(last="smith", max_results=1000), AdapterContext(client, timeout_s=0.0)
+        )
+    assert res.status == AdapterStatus.OK
+    assert res.partial is True            # capped by the time budget
+    assert len(res.records) == 18         # only page 1 was gathered
+    assert calls["paging"] == 0           # stopped before fetching the next page
