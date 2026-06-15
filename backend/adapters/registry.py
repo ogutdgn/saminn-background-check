@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from .base import Adapter
 from .dallas import DallasAdapter
+from .odcr import OdcrAdapter
 from .tarrant import TarrantAdapter
 
 
@@ -28,6 +29,7 @@ class RegistryEntry:
 REGISTRY: list[RegistryEntry] = [
     RegistryEntry(TarrantAdapter(), enabled=True),   # Stage 4 — live
     RegistryEntry(DallasAdapter(), enabled=True),    # Stage 4 — live (pagination handled)
+    RegistryEntry(OdcrAdapter(), enabled=True),      # Stage 4 — live (statewide OK; pagination + cap handled)
 ]
 
 
