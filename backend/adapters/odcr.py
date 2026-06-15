@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -47,7 +47,9 @@ from .base import (
 _HOST = "https://odcr.com"
 _SEARCH = f"{_HOST}/search"
 _RESULTS = f"{_HOST}/results"
+_DETAIL = f"{_HOST}/detail"
 _OFFENSE_DISP_SEP = " - ST "   # "<offense> - ST <disposition>" in the Offense-or-Cause cell
+_DETAIL_ID_SEP = "::"          # detail_id = "<court_code>::<casekey>" (fetch_detail splits it)
 
 
 class OdcrAdapter(Adapter):
@@ -57,8 +59,8 @@ class OdcrAdapter(Adapter):
     tier = 2
     timeout_s = 45.0   # POST /search is cold-slow (~16s) on the first hit of a session; give margin
 
-    max_pages = 20         # safety cap on the paging loop (server caps results at 1,000 / ~67 pages)
-    page_delay_s = 0.15    # politeness pause between pages (ODCR is open, but be a good citizen)
+    max_pages = 70         # page the FULL result set (server caps at 1,000 / ~67 pages of 15)
+    page_delay_s = 0.05    # politeness pause between pages (small — it's just a results pager GET)
     budget_margin_s = 3.0  # stop paging this long before the orchestrator's hard timeout
 
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
@@ -79,9 +81,11 @@ class OdcrAdapter(Adapter):
                 # had a results page but parsed nothing and it's not a clean "0 results" -> fail loud
                 raise ValueError("results page had no parseable rows and no 0-results marker")
 
-            # 3. Page through /results?page=N, accumulating with a dedup set. Stop on the true
-            #    end (a page adds nothing new), at max_results / max_pages / the time budget, or
-            #    once we've consumed the server-reported total. Stopping early -> `partial`.
+            # 3. Page through /results?page=N to gather the FULL result set, accumulating with a
+            #    dedup set. We do NOT cap at query.max_results — ODCR is the statewide net, so we
+            #    return everything it has (its own hard limit is 1,000). We stop on the true end (a
+            #    page adds nothing new), once we've consumed the server-reported total, or — when
+            #    more remain — at the page cap / the time budget, which marks the result `partial`.
             deadline = start + int(max(0.0, ctx.timeout_s - self.budget_margin_s) * 1000)
             records: list[InmateRecord] = []
             seen: set[tuple] = set()
@@ -98,9 +102,6 @@ class OdcrAdapter(Adapter):
                     added += 1
                 if added == 0:
                     break  # nothing new -> reached the end (or a repeated page)
-                if len(records) >= query.max_results:
-                    partial = True  # capped at max_results — more may exist
-                    break
                 if total is not None and len(records) >= total:
                     break  # consumed everything the server reported (complete)
                 if AdapterContext.now_ms() >= deadline:
@@ -122,6 +123,55 @@ class OdcrAdapter(Adapter):
             return self._fail(AdapterStatus.TIMEOUT, start, str(e))
         except Exception as e:  # never raise out of search()
             return self._fail(AdapterStatus.ERROR, start, str(e))
+
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Pull ONE case's full record from /detail — Case Information, Parties Involved, and the
+        docket (Case entries) — rendered as a document-styled case sheet (like Dallas). `record_id`
+        is "<court_code>::<casekey>" from the list row's detail_id. Never raises -> None on failure."""
+        try:
+            court, _, casekey = record_id.partition(_DETAIL_ID_SEP)
+            if not court or not casekey:
+                return None
+            resp = await ctx.http.get(
+                _DETAIL, params={"court": court, "casekey": casekey}, timeout=ctx.timeout_s
+            )
+            resp.raise_for_status()
+            d = self._parse_detail(resp.text)
+            if not d["sheet"]:
+                return None  # no parseable case content -> nothing to show
+            charges: list[Charge] = []
+            if d["offense_raw"] or d["case_no"]:
+                charges = [
+                    Charge(
+                        offense=d["offense"],
+                        case_no=d["case_no"],
+                        disposition=d["disposition"],
+                        extra={
+                            "court": d["court_name"],
+                            "filed": d["filed"],
+                            "case_type": d["case_type"],
+                            "offense_or_cause": d["offense_raw"],
+                        },
+                    )
+                ]
+            return InmateRecord(
+                source=self.id,
+                source_url=f"{_DETAIL}?court={quote(court)}&casekey={quote(casekey)}",
+                name="",  # the list record already carries the matched name; merged in the UI
+                matched_on=[MatchInfo(type=MatchType.NAME)],
+                charges=charges,
+                raw={
+                    "case_no": d["case_no"],
+                    "court_name": d["court_name"],
+                    "case_type": d["case_type"],
+                    "filed": d["filed"],
+                    "caption": d["caption"],
+                    "parties": d["parties"],
+                    "detail_text": d["sheet"],  # the document-styled case sheet the UI renders
+                },
+            )
+        except Exception:
+            return None
 
     # -- request building --------------------------------------------------
 
@@ -166,6 +216,8 @@ class OdcrAdapter(Adapter):
             name, role = self._parse_party(row.css_first("td.party"))
             if not name:
                 continue
+            # detail_id packs court + casekey so the UI can pull the full case sheet via fetch_detail
+            detail_id = f"{court_code}{_DETAIL_ID_SEP}{casekey}" if court_code and casekey else None
             case_no = link.text(strip=True) or None
             court_name = self._cell_text(row, "td.court")
             filed = self._cell_text(row, "td.filed")
@@ -195,6 +247,7 @@ class OdcrAdapter(Adapter):
                         "court_name": court_name,
                         "court_code": court_code,
                         "casekey": casekey,
+                        "detail_id": detail_id,   # "<court>::<casekey>" -> fetch_detail / UI case sheet
                         "case_style": case_style,
                         "filed": filed,
                         "party_role": role,
@@ -202,6 +255,100 @@ class OdcrAdapter(Adapter):
                 )
             )
         return out
+
+    def _parse_detail(self, html: str) -> dict:
+        """Parse the /detail case page into structured fields + a readable case-sheet text.
+        Reads the `#detail` section only (skips nav/footer): the caption, the case-header
+        label/value table, the offense, the Parties Involved table, and the dated docket rows."""
+        out: dict = {
+            "caption": None, "case_no": None, "court_name": None, "case_type": None,
+            "filed": None, "offense": None, "disposition": None, "offense_raw": None,
+            "parties": {}, "docket": [], "sheet": "",
+        }
+        det = HTMLParser(html).css_first("#detail")
+        if det is None:
+            return out
+
+        style = det.css_first("#style")
+        out["caption"] = style.text(strip=True) if style else None
+
+        header: dict[str, str] = {}
+        ch = det.css_first("#case-header")
+        if ch is not None:
+            for tr in ch.css("tr"):
+                th = tr.css_first("th")
+                td = tr.css_first("td")
+                if th is None or td is None:
+                    continue
+                for junk in td.css("a.tracking, span"):  # drop "Monitor this case" + "(as of …)"
+                    junk.decompose()
+                header[th.text(strip=True)] = " ".join(td.text().split())
+        ident = header.get("Case Identifier", "")
+        m = re.match(r"(.+?)\s+OK\s*[—–-]\s*(\S+)", ident)  # "Atoka OK — CM-2005-00249"
+        if m:
+            out["court_name"] = m.group(1).strip()
+            out["case_no"] = m.group(2).strip()
+        elif ident:
+            out["case_no"] = ident
+        out["case_type"] = header.get("Type of Case")
+        out["filed"] = header.get("Date Filed")
+
+        off = det.css_first("#offense li") or det.css_first("#offense")
+        offense_raw = " ".join(off.text().split()) if off else None
+        out["offense_raw"] = offense_raw or None
+        out["offense"], out["disposition"] = self._split_offense(offense_raw)
+
+        ppl = det.css_first("#people")
+        if ppl is not None:
+            for tr in ppl.css("tr"):
+                th = tr.css_first("th")
+                td = tr.css_first("td")
+                if th is None or td is None:
+                    continue
+                for junk in td.css("a.tracking"):  # drop "Monitor this person"
+                    junk.decompose()
+                role = th.text(strip=True)
+                pname = " ".join(td.text().split())
+                if role and pname:
+                    out["parties"].setdefault(role, pname)
+
+        entries = det.css_first("#entries")
+        if entries is not None:
+            for tr in entries.css("tr"):
+                cells = [c.text(strip=True) for c in tr.css("th, td")]
+                if len(cells) < 2:
+                    continue
+                date, desc = cells[0], cells[1]
+                # keep only real dated docket events — drops the header, the fee sub-rows (empty
+                # date) and the "Grand Total" footer (non-date first cell)
+                if not desc or not re.match(r"\d{1,2}/\d{1,2}/\d{4}$", date):
+                    continue
+                out["docket"].append((date, desc))
+
+        out["sheet"] = self._build_sheet(out)
+        return out
+
+    @staticmethod
+    def _build_sheet(d: dict) -> str:
+        """Lay the parsed fields out as a readable case document (rendered monospaced in the UI)."""
+        lines: list[str] = []
+        if d["caption"]:
+            lines += [d["caption"], ""]
+        lines.append("CASE INFORMATION")
+        for label, val in (("Court", d["court_name"]), ("Case no.", d["case_no"]),
+                           ("Type", d["case_type"]), ("Filed", d["filed"]),
+                           ("Offense", d["offense_raw"])):
+            if val:
+                lines.append(f"  {label:<10} {val}")
+        if d["parties"]:
+            lines += ["", "PARTIES INVOLVED"]
+            for role, pname in d["parties"].items():
+                lines.append(f"  {role:<10} {pname}")
+        if d["docket"]:
+            lines += ["", "CASE ENTRIES (DOCKET)"]
+            for date, desc in d["docket"]:
+                lines.append(f"  {date:<12} {desc}")
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _result_count(html: str) -> int | None:

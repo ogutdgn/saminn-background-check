@@ -98,6 +98,15 @@ Search form fields (POST `/search`):
   (parties, not attorneys), so rows are real-name matches, never attorney noise.
 - **`total`**: ODCR reports a count ("Limited to 1,000 results" / "N results"). We parse
   it into `AdapterResult.total`; `partial=True` whenever we stop before consuming it.
+- **Return the FULL result set** (not `max_results`): ODCR is the statewide net, so `search()`
+  pages every page up to ODCR's own 1,000 hard cap (`max_pages=70`), ignoring `query.max_results`.
+  Bounded by the time budget — a common surname (≈1,000 rows / 67 pages) takes ~12–18 s and the
+  rare slow cold POST can still tip the whole search over the timeout. Narrow with a first name.
+- **Per-record case sheet** (`fetch_detail`): `detail_id = "<court_code>::<casekey>"` (set on each
+  list row) → `GET /detail?court=&casekey=` → parsed into `raw["detail_text"]`, a document-styled
+  sheet (Case Information, Parties Involved, the dated docket) the UI renders like Dallas. No
+  mugshot/DOB (none exist); the docket's fee sub-rows + "Grand Total" footer are filtered out.
+  Fixture: `detail_atoka_cm0500249.html`.
 
 ## Captured fixtures (git-ignored)
 

@@ -17,6 +17,7 @@ FIX = Path(__file__).parent / "fixtures" / "odcr"
 PAGE1 = (FIX / "search_smithjohn_page1.html").read_bytes()
 PAGE2 = (FIX / "search_smithjohn_page2.html").read_bytes()
 NONE = (FIX / "search_no-results.html").read_bytes()
+DETAIL = (FIX / "detail_atoka_cm0500249.html").read_bytes()
 
 adapter = OdcrAdapter()
 adapter.page_delay_s = 0  # no politeness sleeps in tests
@@ -53,6 +54,8 @@ def test_field_mapping_offense_disposition_and_link():
     # stable identity for dedup / deep link: court code + space-decoded casekey
     assert r.raw["court_code"] == "003-"
     assert r.raw["casekey"] == "003-CM  0500249"
+    # detail_id packs court + casekey so the UI can pull the full case sheet
+    assert r.raw["detail_id"] == "003-::003-CM  0500249"
 
 
 def test_offense_split_edges():
@@ -158,7 +161,9 @@ async def test_pagination_accumulates_across_pages_and_dedups():
 
 
 @pytest.mark.asyncio
-async def test_pagination_stops_at_max_results_partial():
+async def test_returns_full_result_set_ignoring_max_results():
+    # ODCR is the statewide net: it returns ALL results (up to the server's 1,000 cap), NOT just
+    # query.max_results. A tiny max_results must not cap it — it pages until the end.
     calls = {"results": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -166,17 +171,16 @@ async def test_pagination_stops_at_max_results_partial():
             return httpx.Response(200, content=PAGE1)
         if request.url.path == "/results":
             calls["results"] += 1
-            return httpx.Response(200, content=PAGE2)
+            return httpx.Response(200, content=PAGE2)   # page2, then page2 again (dedup end)
         return httpx.Response(200, content=b"<html></html>")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         res = await adapter.search(SearchQuery(last="smith", max_results=5), AdapterContext(client))
 
-    # page 1 alone (15 rows) already exceeds max_results=5 -> stop before fetching any more pages
     assert res.status == AdapterStatus.OK
-    assert res.partial is True                        # capped at max_results -> more may exist
-    assert len(res.records) == 15
-    assert calls["results"] == 0
+    assert len(res.records) == 30          # 30 distinct across two pages — NOT capped at 5
+    assert res.partial is False            # reached the true end (dedup), nothing dropped
+    assert calls["results"] == 2           # fetched page2, then the repeat, then stopped
 
 
 @pytest.mark.asyncio
@@ -224,3 +228,49 @@ async def test_search_timeout_status():
         res = await adapter.search(SearchQuery(last="smith"), AdapterContext(client))
 
     assert res.status == AdapterStatus.TIMEOUT      # the 4th outcome (was untested)
+
+
+# -- fetch_detail (the full case sheet) ----------------------------------
+
+def test_parse_detail_builds_case_sheet():
+    d = adapter._parse_detail(DETAIL.decode("utf-8", "replace"))
+    assert d["case_no"] == "CM-2005-00249"
+    assert d["court_name"] == "Atoka"
+    assert d["case_type"] == "Criminal Misdemeanor Proceedings"
+    assert d["filed"] == "11/14/2005"
+    assert d["offense"] == "BEING DRUNK IN A PUBLIC PLACE" and d["disposition"] == "GUILTY PLEA"
+    assert d["parties"]["Defendant"] == "SMITH, JOHN"
+    assert d["parties"]["Judge"] == "MERRIOTT, NEAL"
+    assert len(d["docket"]) >= 8                       # real dated docket events
+    assert all("Grand Total" not in date for date, _ in d["docket"])  # footer row dropped
+    sheet = d["sheet"]
+    assert "CASE INFORMATION" in sheet and "PARTIES INVOLVED" in sheet and "CASE ENTRIES" in sheet
+    assert "STATE OF OKLAHOMA VS. SMITH, JOHN" in sheet
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_returns_record_with_sheet():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/detail":
+            # the casekey's spaces survive the round-trip through the detail_id
+            assert request.url.params.get("court") == "003-"
+            assert request.url.params.get("casekey") == "003-CM  0500249"
+            return httpx.Response(200, content=DETAIL)
+        return httpx.Response(200, content=b"<html></html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("003-::003-CM  0500249", AdapterContext(client))
+
+    assert rec is not None
+    assert rec.source == "odcr"
+    assert rec.charges and rec.charges[0].case_no == "CM-2005-00249"
+    assert rec.charges[0].disposition == "GUILTY PLEA"
+    assert rec.raw["parties"]["Defendant"] == "SMITH, JOHN"
+    assert "CASE ENTRIES" in (rec.raw.get("detail_text") or "")
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_bad_id_returns_none():
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, content=b"<html></html>"))) as client:
+        assert await adapter.fetch_detail("no-separator-here", AdapterContext(client)) is None
