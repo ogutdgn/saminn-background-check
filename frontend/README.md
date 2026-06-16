@@ -25,10 +25,15 @@ per-county special-casing beyond display.
   intake, not a marketing page.
 - No business logic about *how* sources are scraped ever lives here.
 
-## Set up in Phase 1 (not yet present)
+## Stack (built in Phase 1)
 
-- The Vite app scaffold, the component library, and the dev proxy to the backend's
-  `/api` are created in the first frontend phase. This folder is docs-only for now.
+- **Vite + React + TypeScript**, **Tailwind v4 + shadcn/ui** (base-nova). `npm run dev`
+  proxies `/api` → the backend on `:8099` (see `vite.config.ts`).
+- `src/api/` — contract **types generated from the backend OpenAPI** (`schema.ts`, regen via
+  `npm run gen:api`) + an **SSE-over-fetch** client (`search.ts`; `POST /api/search` is a
+  stream, so we read `text/event-stream` off `fetch` rather than the GET-only `EventSource`).
+- `src/components/SourceCard.tsx` — one card per source, updating live (pending →
+  ok/no-results/error) with name/year/sex, charges + disposition, and `matched_on` tags.
 
 ## Prod
 

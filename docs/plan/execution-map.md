@@ -32,24 +32,66 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 0: Foundation (wrapping up) → Phase 1: Scaffold (next)
-> **Phase 0 is essentially DONE.** Deployment (on-prem server), stack (Python/FastAPI + React,
-> SSE, SQLite), and architecture (adapter + contract + orchestrator) are decided and written;
-> the 7 sources are reconned and tiered (6 proven 🟢, Fannin 🟡); the add-a-source **pipeline**
-> and this plan-tracking system are in place. See the 2026-06-10 entry in [last-point.md](last-point.md).
+## CURRENT PHASE → Phase 2: Sources (in progress) — 4 of ~6 live
+> **Phase 0 ✅** and **Phase 1 ✅** (the vertical slice runs end to end). Dated entries in [last-point.md](last-point.md).
 >
-> **Phase 1 (Scaffold) is next.** Order:
-> - [ ] Backend project setup (deps/venv, `pyproject.toml`, `pytest`).
-> - [ ] **The contract:** `backend/adapters/base.py` (Pydantic `InmateRecord`/`AdapterResult`/`Adapter`) + `registry.py`. **Lock it — this is the keystone.**
-> - [ ] **Core engine:** `orchestrator.py` (fan-out + SSE-yield + timeout/isolation), `browser.py` (shared Playwright pool + queue), `cache.py` (SQLite TTL), `audit.py` (SQLite append-only).
-> - [ ] **API:** `backend/web/app.py` with `POST /api/search` SSE.
-> - [ ] **Frontend:** Vite + TS scaffold, SSE client, one source card; types generated from OpenAPI.
-> - [ ] **Vertical slice:** one **stub adapter** end-to-end (search → orchestrator → SSE → card) to prove the whole spine before real sources.
+> **Phase 1 (Scaffold) — core COMPLETE; 2 infra pieces deferred *by design* (not unfinished):**
+> - [x] Backend setup · **contract** (`base.py`, structured `SearchQuery`) + registry · **orchestrator** (fan-out/stream/timeout/isolation) · **audit** (append-only SQLite) · **API** (`/api/search` SSE, `/api/health`, `/api/record/{source}/{id}`) · **frontend** (React/Tailwind/shadcn, OpenAPI-typed) · live vertical slice.
+> - [ ] `browser.py` (Playwright manager) — **deferred to Collin** (build when the first browser source lands).
+> - [ ] `cache.py` (SQLite TTL) — **deferred to Phase 4** (a volume optimization; unneeded at current volume).
 >
-> **Still open before Phase 1 starts:** team-size confirmation + the team-division doc (so the
-> Phase-1 subsystems and Phase-2 counties get owners).
+> **Phase 2 (Sources) — in progress:**
+> - [x] Tarrant (T1, http) · [x] Dallas (T2, http) — both live, with photos / case-sheet detail-on-demand.
+> - [x] **ODCR (T2, OK statewide)** — live on `source/odcr`; one adapter for 70+ OK counties.
+> - [x] **Hunt (T2)** — live on `source/hunt`; Sheriff roster + mugshot/charges detail (image source).
+> - [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
+>
+> **Loose ends:** [x] `ARCHITECTURE.md` contract synced (2026-06-15). Open: tune Dallas paging latency
+> (~18 s, worse with a first name — timed out at 30 s on SMITH/JOHN); tighten the Dallas name/DOB parser;
+> replace the frontend `IMAGE_SOURCES` hardcode with a backend photo-capability flag; **merge `source/odcr`
+> (and the `source/tarrant*` everything-branch) to `main`** — branch hygiene debt is growing. Team: **solo**.
 
 ## Daily work log
+
+### 2026-06-15
+- [x] **On-demand record detail:** `GET /api/record/{source}/{id}` + optional `Adapter.fetch_detail`. Tarrant: CID → mugshot + charges. **Dallas: Search-by-Case (stable case#) → full court case sheet** (richer than the list — full name, unmasked DOB).
+- [x] **Frontend detail UX:** profile photos auto-loaded at search for image sources (capped/bounded); every record has **"More details" → popup (Dialog)**: Tarrant = big mugshot + charges, Dallas = document-styled case sheet (Courier, fixed-width columns, header bar).
+- [x] **UI polish:** "No image" placeholders, search + popup **loading spinners**, wider/taller popup so the case sheet fits.
+- [x] **Robustness:** `AdapterResult.partial` + Dallas time-budgeted pagination (no more timeout→0); detail fetch timeout + Retry; 60s dev-proxy timeout (Dallas detail is ~5–15s server-side). **38 tests pass.**
+- [x] **Cleanup:** synced `ARCHITECTURE.md` contract spec (structured `SearchQuery`, `partial`, `fetch_detail`); clarified Phase-1 deferral (browser/cache).
+
+**(2nd session) — ODCR source, full pipeline on `source/odcr`:**
+- [x] **Stage 1 spike (live):** proved the ODCR pull — GET `/` (cookie) → POST `/search` (`party="LAST, FIRST"`, `party-type=P+D`) → 302 → `/results`, paged via `GET /results?page=N` (server caps at 1,000). Captured fixtures (page1/page2/no-results/detail/form) + spike notes `backend/tests/fixtures/odcr/README.md`.
+- [x] **Stage 2 adapter** `adapters/odcr.py` (Tier 2, http): one record per case-row, ` - ST ` offense/disposition split (full text kept), `matched_on=NAME`+party role, stable `/detail` deep link; **no DOB/sex/photo** (court index). Registered disabled.
+- [x] **Stage 3 tests** `test_odcr.py` (11): parsing, count, no-results, party-string, dedup pagination, max_results/time-budget `partial`, error isolation. **Full suite 49 pass** (was 38).
+- [x] **Stage 4 enable + verify:** flipped enabled; verified live through the **orchestrator** (552 ms, OK, total=1000, partial) and the **SSE API** (`POST /api/search` → ODCR `result` event). Streams independently (Dallas timed out on the same query; ODCR unaffected). SOURCES.md → ODCR/Tarrant/Dallas `done`.
+**(3rd session) — Hunt source, full pipeline on `source/hunt`:**
+- [x] **Stage 1 spike (live):** proved the Hunt pull. Key discovery: **no server-side name search** — `results.asp` (POST, `limit≤500`) returns the *whole* current roster; we filter by surname client-side. Per-inmate detail via `booking.asp` (POST `partyID`/`jailingID`/`releaseDate`) → **mugshot + charges + personal details**; wrong fields → "Invalid Form Sent". Fixtures + notes `backend/tests/fixtures/hunt/README.md`.
+- [x] **Stage 2 adapter** `adapters/hunt.py` (Tier 2, http): roster pull + `_surname_matches` (prefix/compound-token), `fetch_detail` (mugshot base64 + charges + personal), `detail_id="<party>-<jail>"`, fail-loud on missing table. **No DOB anywhere.** Registered.
+- [x] **Stage 3 tests** `test_hunt.py` (16, incl. review-driven): field mapping, surname filter edges (incl. apostrophes), OK/no-match/capped-partial/error/timeout, fetch_detail (mugshot+charges), invalid-form/empty-name/bad-id → None, + real-capture smoke tests. **Full suite 66 pass** (was 49).
+- [x] **Stage 4 enable + verify:** enabled; verified live — orchestrator (Hunt OK 3×GONZALEZ 233 ms) + live `fetch_detail` (42 KB mugshot + 3 charges). Frontend: added `"hunt"` to `IMAGE_SOURCES` (mugshots auto-load like Tarrant); `tsc` clean.
+- [x] **Re-verified ODCR + Hunt together** (orchestrator): both OK ~0.2–2.4 s. One transient ODCR 30 s timeout on first run was **not reproducible** (4 subsequent runs fine) — handled by per-source timeout + isolation.
+- [x] **Adversarial multi-agent review** (Workflow: 6 reviewers × 2 skeptics, 20 agents) of hunt.py + odcr.py → 7 findings, all on **Hunt** (ODCR clean). Fixed: partial-flag on a server-capped roster (even no-match), fail-loud on empty-name detail, specific charges-table detection, apostrophe/period surname recall (O'BRIEN~OBRIEN); added the missing TIMEOUT test (hunt + odcr); documented the deliberate keep-undeep-linkable-rows choice. **Full suite 66 pass.**
+- [x] **Ran the full app** (uvicorn :8099 + Vite) and verified all 4 cards stream live (Tarrant 17 + mugshots, Dallas 54, ODCR 30/1000, Hunt 3 + mugshots). Hunt mugshots auto-load (confirmed `GET /api/record/hunt/...` 200s).
+- [x] **fix(core): per-source timeout budget** — ODCR's cold `POST /search` (~16 s) intermittently tripped the flat 20 s per-source timeout → "Timed out" card. Added optional `Adapter.timeout_s`; orchestrator now uses a per-source budget (ODCR=45 s; jail rosters keep 20 s fail-fast). Verified live: ODCR → OK ~9 s. Dallas unchanged (self-limits paging to the budget).
+- [x] **feat(odcr): return all + case sheet** (user ask) — ODCR now pages the FULL result set (up to its 1,000 server cap; `max_pages=70`), not `max_results`; and a per-record **case sheet** via `fetch_detail` (`/detail` → Case Information / Parties / docket), rendered like Dallas (generalized `CaseSheet`). **69 tests.** Verified live: GONZALEZ → 1,000 ODCR records (~14 s) + a record's "More details" shows the full sheet. **Tradeoff:** a common surname returns ~1,000 (slow/heavy, more timeout-prone on ODCR's cold POST) — narrowing with a first name is the intended path.
+- [x] **Professional UI redesign** (user ask) — full pass over the SPA covering every flow: app header, contained search panel (Search/Clear/hint), live **results summary bar**, semantic per-source status (Match found / No matches / Timed out / error, color+icon), source-kind subtitles, amber partial note, whole-row record buttons with photo avatars + chevrons, and result lists **capped at 8 with "Show more"** (no more 1,000-row dumps). Enriched **`/api/health`** (`{id, display_name, transport, has_photos}`) → fixes both long-standing UI debts: the **"Odcr County" placeholder** and the **`IMAGE_SOURCES` hardcode** (now backend-driven `has_photos`). Verified live across idle / searching / ok / partial / timeout / detail dialog / mobile. **69 tests, tsc clean.**
+- [x] **Unified results list** (user ask — "stop stacking results one-under-another"; research-led via a 5-agent design-review workflow) — replaced the 2×2 grid of per-source columns with ONE merged, scannable single-column list (`components/Results.tsx`; removed `SourceCard.tsx`). Sticky control bar: per-source chips (status **+** multi-select filter + count), sort (best-match/name/birth-year/source), and sex / birth-year / with-photo filters — all **client-side over the firehose**, the real fix for ODCR's ~1,000-row dump (narrow instantly without leaving the list). Each row: photo (mugshot / court glyph) · name · b.year·sex+matched-on · top charge · tinted source chip · whole-row → detail dialog. Verified live: filtering 89→7 (source+birth-year), detail dialog from a row, mobile single-column. Console + tsc clean.
+- [x] Resolved: `IMAGE_SOURCES`→backend `has_photos` flag · "Odcr County" placeholder (now `/api/health` display names).
+- [ ] Open: Dallas latency tuning · Dallas name/DOB parser · ODCR return-all is timeout-prone on common surnames (consider a sane cap) · merge `source/odcr`+`source/hunt`+everything-branch to `main` · **next source: Denton (T3) or Collin (T4 → `browser.py`)**.
+
+### 2026-06-14
+- [x] Stage-1 raw pulls (live): **Tarrant** (JSON jTable, 3-call flow + base64 mugshot) and **Dallas** (HTML court search, disclaimer gate, dispositions, no mugshots). Fixtures + spike notes committed.
+- [x] Locked the **v1 contract** (`base.py`) with a **structured `SearchQuery`**; registry + sanity tests. Committed.
+- [x] Built + fixture-tested **Tarrant** and **Dallas** adapters (Stage 2–3); registered disabled.
+- [x] **Adversarial verification workflow** (3 agents) — caught + fixed a real Dallas grouping bug (masked-DOB merge/split → one record per case-row), `total=None`, Tarrant sex→None. 19 tests pass. Committed.
+- [x] Carried over from 06-10: team size **resolved (solo)** → team-division doc dropped; foundation + plan docs committed.
+- [x] **Core engine:** orchestrator (fan-out, completion-order streaming, hard timeout, failure isolation) + append-only audit log. Stub-adapter tests.
+- [x] **Dallas pagination solved** — `POST /paging` (`which=down`) + dedup, verified live (3-page SMITH) and against the prior demo's `dallas.ts`. **28 tests pass.**
+- [x] **API:** FastAPI `POST /api/search` SSE + `/api/health`; audit wired; enabled Tarrant + Dallas (Stage 4). 31 tests.
+- [x] **Frontend:** Vite + React + TS + Tailwind + shadcn/ui; SSE-over-fetch client (CRLF-tolerant); SourceCard; OpenAPI-generated types.
+- [x] **Vertical slice verified live in-browser** (SMITH → Tarrant 47 / Dallas 54 streamed in order). **Phase 1 complete.**
+- [ ] Sync `ARCHITECTURE.md` `SearchQuery`; tune Dallas paging latency. Then Phase 2 sources.
 
 ### 2026-06-10
 - [x] Reviewed the existing demo (Next.js + Python versions) and extracted the reusable **knowledge** (source tiers, per-site gotchas) rather than the code.
