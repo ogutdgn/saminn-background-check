@@ -5,8 +5,9 @@ Denton County **Tyler "Public Access"** (legacy Odyssey portal), *self-hosted* a
 (stateful — must replay `__VIEWSTATE`/`__EVENTVALIDATION` and set JS-populated "magic
 fields"). Transport `http`. Spiked 2026-06-15.
 
-**Status: flow PROVEN, but the name search currently returns 0 records — one blocker
-remains (`CaseTypeIDs`, below). Not yet adapter-ready.**
+**Status: LIVE (`adapters/denton.py`).** Flow proven end-to-end; SMITH returns 400 records
+(the Tyler cap → `partial`). The 0-record blocker was **`BaseConnKy=DF`** (Defendant), not
+`CaseTypeIDs` — see below.
 
 ## Reachability (the recon risk — CLEARED)
 
@@ -59,17 +60,22 @@ For a **Party → Name** search (`SearchBy=1`, `PartySearchMode=Name`):
 Each was found by iterating the live server's error messages (bounce → Boolean error →
 SortBy error → clean 0-record page).
 
-## ⚠️ The remaining blocker — `CaseTypeIDs` (next step)
+## The 0-record blocker — SOLVED: `BaseConnKy=DF`
 
-The clean results page reports **"Record Count: 0 — No cases matched"** for `SMITH`, which
-is wrong. Cause: the hidden **`CaseTypeIDs`** (which case categories to search) is **empty**.
-In the browser it's populated from the page's embedded case-type data (a JS structure;
-`document.getElementById("CaseTypeIDs").value = caseTypeIDs`) — there is **no AJAX endpoint**
-(only `Search/MyAccount/default/logout.aspx` exist), so the case types are embedded in the
-~157 KB form, not fetched. **Next step:** extract the full case-type ID list from the form's
-embedded data (or the node-aware form) and submit `CaseTypeIDs=<all ids>` (likely a comma
-list), then re-run — that should turn 0 into real rows. After that: capture a multi-result
-fixture + a no-results fixture, then build the adapter.
+The search rendered a clean results page but **"Record Count: 0"**. The fix was **not**
+`CaseTypeIDs` (a red herring — case categories only apply to *Judicial-Officer* searches,
+`SearchBy=3/4`). The real cause was the missing **`BaseConnKy`**: for a party-name search the
+form's `ValidateSearchParameters()` sets `BaseConnKy = "DF"` (Defendant — *"ODY-148826 to use
+search by Defendant"*). With `BaseConnKy=DF`, `SMITH` returns **400 records** (the Tyler list
+cap → we mark `partial`).
+
+## Results-row structure (fixtures `results_smith_multi.html`)
+
+One `<tr>` per case, each with a `CaseDetail.aspx?CaseID=<id>` link. Columns:
+`Case Number` · `Citation Number` · `Defendant Info` (= **"Name MM/DD/YYYY"** — name + DOB;
+we keep the **year** only) · `Filed/Location/Judicial Officer` · `Type/Status` (the
+disposition) · `Charge(s)`. The `CaseDetail.aspx?CaseID` page is the **Register of Actions**
+(Party / Charge / Events) → `fetch_detail`.
 
 ## Captured artifacts (git-ignored)
 

@@ -1,0 +1,281 @@
+"""Denton County, TX — Tyler "Public Access" (self-hosted Odyssey) (Tier 3, http).
+
+Self-hosted Tyler Public Access at justice1.dentoncounty.gov. ASP.NET WebForms — **stateful
+Tier 3**: we replay `__VIEWSTATE`/`__EVENTVALIDATION` and set the JS-populated "magic fields".
+Court records → charges + dispositions + a register-of-actions detail; **no mugshots**, but the
+list DOES carry a birth date (we normalize DOWN to year). Spike notes + the cracked field map:
+backend/tests/fixtures/denton/README.md.
+
+Flow (JP & County Criminal name search, `Search.aspx?ID=100`):
+  GET  /default.aspx                         -> session cookie
+  POST /Search.aspx?ID=100 (NodeID, NodeDesc) -> the node-aware search form (fresh __VIEWSTATE)
+  POST /Search.aspx?ID=100 (search params)    -> CaseSearchResults.aspx (the result rows)
+
+The load-bearing "magic fields" (from the form's ValidateSearchParameters JS): for a party-name
+search it's SearchBy=1, SearchType=PARTY, SearchMode=NAME, NameTypeKy=ALIAS, and — the one that
+makes it return defendants — **BaseConnKy=DF**. Plus the boolean hidden fields must be real
+"true"/"false" (empty -> Boolean.Parse error) and SortBy must be a valid value. NodeID is the
+"All JP & County Courts" comma-list (empty NodeID -> the server bounces to the portal).
+
+Accuracy: court records -> `matched_on = NAME` (defendant search). `year_of_birth` is the year of
+the list DOB (we never store the full birthdate of a possible-wrong-person match). No sex on the
+list. One InmateRecord per case-row (no grouping). Tyler caps the result list at ~400 (we mark
+`partial` when capped).
+"""
+from __future__ import annotations
+
+import re
+
+import httpx
+from selectolax.parser import HTMLParser
+
+from .base import (
+    Adapter,
+    AdapterContext,
+    AdapterResult,
+    AdapterStatus,
+    Charge,
+    InmateRecord,
+    MatchInfo,
+    MatchType,
+    SearchQuery,
+)
+
+_HOST = "https://justice1.dentoncounty.gov/PublicAccess"
+_SEARCH = f"{_HOST}/Search.aspx?ID=100"   # JP & County Court: Criminal Case Records
+# The "All JP & County Courts" node (the value of the portal's node selector).
+_ALL_COURTS = "1,1101,1110,1102,1003,1104,1105,1106,1107,1108,1270,1280,1310,1320,1330,1340,1350,1360"
+_DOB_RE = re.compile(r"(\d{2}/\d{2}/(\d{4}))\s*$")          # trailing DOB in the "Defendant Info" cell
+_FILED_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{4})\s+(.*)$")  # leading filed date in the location cell
+_COUNT_RE = re.compile(r"Record Count:.*?<b>\s*([\d,]+)\s*</b>", re.DOTALL)
+_CASEID_RE = re.compile(r"CaseID=(\d+)")
+
+
+class DentonAdapter(Adapter):
+    id = "denton"
+    display_name = "Denton County"
+    transport = "http"
+    tier = 3
+    has_photos = False
+    timeout_s = 45.0   # Tier-3 multi-step (GET + 2 POSTs) through Cloudflare; give margin
+    RESULT_CAP = 400   # Tyler Public Access caps the result list
+
+    async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
+        start = ctx.now_ms()
+        try:
+            # 1. session
+            await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
+            # 2. establish the court node -> the node-aware search form (with fresh __VIEWSTATE)
+            nf = await ctx.http.post(
+                _SEARCH,
+                data={"NodeID": _ALL_COURTS, "NodeDesc": "All JP & County Courts"},
+                timeout=ctx.timeout_s,
+            )
+            nf.raise_for_status()
+            # 3. the actual party-name (defendant) search
+            resp = await ctx.http.post(
+                _SEARCH, data=self._search_form(nf.text, query),
+                headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
+            )
+            resp.raise_for_status()
+            html = resp.text
+            if "Exception" in html and "Render" in html:
+                raise ValueError("Denton results render error (a magic field is wrong)")
+
+            total = self._record_count(html)
+            records = self._parse_results(html)
+            if not records:
+                if total == 0 or "No cases matched" in html:
+                    return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
+                raise ValueError("results page had no parseable rows and no 0-records marker")
+            partial = len(records) >= self.RESULT_CAP   # capped at the Tyler limit -> more exist
+            return self._envelope(AdapterStatus.OK, records, total, start, partial=partial)
+        except httpx.TimeoutException as e:
+            return self._fail(AdapterStatus.TIMEOUT, start, str(e))
+        except Exception as e:  # never raise out of search()
+            return self._fail(AdapterStatus.ERROR, start, str(e))
+
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Pull one case's full record (CaseDetail.aspx = Register of Actions): all charges +
+        a readable case sheet (Party / Charge / Events). `record_id` is the CaseID. The flow is
+        stateful, so we re-establish the session first. Never raises -> None on failure."""
+        try:
+            if not record_id.isdigit():
+                return None
+            await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
+            resp = await ctx.http.get(
+                f"{_HOST}/CaseDetail.aspx", params={"CaseID": record_id},
+                headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
+            )
+            resp.raise_for_status()
+            d = self._parse_detail(resp.text)
+            if not d["sheet"]:
+                return None
+            return InmateRecord(
+                source=self.id,
+                source_url=f"{_HOST}/CaseDetail.aspx?CaseID={record_id}",
+                name="",  # the list record already carries the matched name; merged in the UI
+                matched_on=[MatchInfo(type=MatchType.NAME)],
+                charges=d["charges"],
+                raw={"case_id": record_id, "case_no": d["case_no"], "detail_text": d["sheet"]},
+            )
+        except Exception:
+            return None
+
+    # -- request building --------------------------------------------------
+
+    @staticmethod
+    def _search_form(node_form_html: str, query: SearchQuery) -> dict:
+        """Take all inputs from the node-aware form (incl. __VIEWSTATE + the populated NodeID),
+        then set the party-name (defendant) search fields — BaseConnKy=DF is the load-bearing one."""
+        form = HTMLParser(node_form_html).css_first("#SearchParameters") or HTMLParser(node_form_html).css_first("form")
+        data: dict = {}
+        if form is not None:
+            for inp in form.css("input"):
+                n = inp.attributes.get("name")
+                if not n:
+                    continue
+                if inp.attributes.get("type") in ("radio", "checkbox") and inp.attributes.get("checked") is None:
+                    continue
+                data[n] = inp.attributes.get("value") or ""
+        data.update({
+            "SearchBy": "1", "PartySearchMode": "Name",
+            "SearchType": "PARTY", "SearchMode": "NAME",
+            "NameTypeKy": "ALIAS", "BaseConnKy": "DF",   # DF = Defendant (the fix)
+            "LastName": (query.last or "").strip(),
+            "FirstName": (query.first or "").strip(),
+            "MiddleName": (query.middle or "").strip(),
+            "AllStatusTypes": "true", "StatusType": "true", "ShowInactive": "false",
+            "RequireFirstName": "False", "ExactName": "false",
+            "SortBy": "casenumber", "SearchSubmit": "Search",
+        })
+        return data
+
+    # -- pure parsers (fixture-tested) ------------------------------------
+
+    def _parse_results(self, html: str) -> list[InmateRecord]:
+        """One InmateRecord per result row (a case). Columns: Case Number, Citation, Defendant
+        Info (name + DOB), Filed/Location/Judge, Type/Status (disposition), Charge(s)."""
+        table = self._results_table(HTMLParser(html))
+        if table is None:
+            return []
+        out: list[InmateRecord] = []
+        for row in table.css("tr"):
+            link = row.css_first("a[href*=CaseDetail]")
+            if link is None:
+                continue
+            tds = [c.text(separator=" ", strip=True) for c in row.css("td")]
+            if len(tds) < 6:
+                continue
+            case_no, citation, name_dob, filed_loc, status, charge = tds[0], tds[1], tds[2], tds[3], tds[4], tds[5]
+            name, year = self._split_name_dob(name_dob)
+            if not name:
+                continue
+            filed, court = self._split_filed_loc(filed_loc)
+            case_id = (_CASEID_RE.search(link.attributes.get("href") or "") or [None, None])[1] \
+                if _CASEID_RE.search(link.attributes.get("href") or "") else None
+
+            out.append(
+                InmateRecord(
+                    source=self.id,
+                    source_url=f"{_HOST}/CaseDetail.aspx?CaseID={case_id}" if case_id else None,
+                    name=name,
+                    year_of_birth=year,           # year of the list DOB (full birthdate not retained)
+                    sex=None,                     # not on the Denton list
+                    matched_on=[MatchInfo(type=MatchType.NAME, detail="Defendant")],
+                    charges=[
+                        Charge(
+                            offense=charge or None,
+                            case_no=case_no or None,
+                            disposition=status or None,
+                            extra={"citation": citation or None, "court": court, "filed": filed},
+                        )
+                    ],
+                    raw={
+                        "case_id": case_id,
+                        "detail_id": case_id,      # CaseID -> fetch_detail / UI case sheet
+                        "case_no": case_no or None,
+                        "citation": citation or None,
+                        "court": court,
+                        "filed": filed,
+                    },
+                )
+            )
+        return out
+
+    def _parse_detail(self, html: str) -> dict:
+        """Register of Actions -> readable case sheet + the full charge list."""
+        tree = HTMLParser(html)
+        out: dict = {"case_no": None, "charges": [], "sheet": ""}
+        container = tree.css_first(".ssCaseDetailBody") or tree.body
+        if container is None:
+            return out
+        text = container.text(separator="\n")
+        lines = [ln.replace("\xa0", " ").rstrip() for ln in text.split("\n") if ln.strip()]
+        out["sheet"] = "\n".join(lines)
+        m = re.search(r"Case No\.\s*([A-Za-z0-9\-]+)", out["sheet"])
+        out["case_no"] = m.group(1) if m else None
+        # charges: any line under the charge section (best-effort; the list already has the primary)
+        for row in tree.css("table tr"):
+            tds = [c.text(strip=True) for c in row.css("td")]
+            if len(tds) >= 2 and tds[0] and re.match(r"^\d+\.?$", tds[0]) and len(tds[1]) > 3:
+                out["charges"].append(Charge(offense=tds[1], extra={"detail": " ".join(tds[2:]) or None}))
+        return out
+
+    # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _results_table(tree: HTMLParser):
+        for t in tree.css("table"):
+            if t.css_first("a[href*=CaseDetail]") is not None:
+                return t
+        return None
+
+    @staticmethod
+    def _split_name_dob(cell: str) -> tuple[str | None, str | None]:
+        cell = (cell or "").strip()
+        m = _DOB_RE.search(cell)
+        if m:
+            return (cell[: m.start()].strip() or None), m.group(2)
+        return (cell or None), None
+
+    @staticmethod
+    def _split_filed_loc(cell: str) -> tuple[str | None, str | None]:
+        cell = (cell or "").strip()
+        m = _FILED_RE.match(cell)
+        if m:
+            return m.group(1), (m.group(2).strip() or None)
+        return None, (cell or None)
+
+    @staticmethod
+    def _record_count(html: str) -> int | None:
+        m = _COUNT_RE.search(html)
+        return int(m.group(1).replace(",", "")) if m else None
+
+    def _envelope(
+        self,
+        status: AdapterStatus,
+        records: list[InmateRecord],
+        total: int | None,
+        start_ms: int,
+        *,
+        partial: bool = False,
+    ) -> AdapterResult:
+        return AdapterResult(
+            source=self.id,
+            display_name=self.display_name,
+            status=status,
+            records=records,
+            total=total,
+            partial=partial,
+            duration_ms=AdapterContext.now_ms() - start_ms,
+        )
+
+    def _fail(self, status: AdapterStatus, start_ms: int, error: str | None = None) -> AdapterResult:
+        return AdapterResult(
+            source=self.id,
+            display_name=self.display_name,
+            status=status,
+            duration_ms=AdapterContext.now_ms() - start_ms,
+            error=error,
+        )
