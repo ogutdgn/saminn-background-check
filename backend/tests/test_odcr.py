@@ -274,3 +274,39 @@ async def test_fetch_detail_bad_id_returns_none():
     async with httpx.AsyncClient(transport=httpx.MockTransport(
         lambda r: httpx.Response(200, content=b"<html></html>"))) as client:
         assert await adapter.fetch_detail("no-separator-here", AdapterContext(client)) is None
+
+
+# -- server-cap -> partial (review #2/#5) --------------------------------
+
+def test_is_server_capped_detects_limited_to():
+    assert adapter._is_server_capped(PAGE1.decode("utf-8", "replace")) is True   # "Limited to 1,000 results"
+    assert adapter._is_server_capped('<p id="duration">8 results (0.1 seconds)</p>') is False
+    assert adapter._is_server_capped("<html><body>no duration</body></html>") is False
+
+
+_CAPPED_PAGE = (
+    '<html><body><p id="duration">Limited to 1 results (0.10 seconds)</p>'
+    '<table id="results-list"><tbody><tr>'
+    '<td class="court">Tulsa</td>'
+    '<td class="case-number"><a href="/detail?court=072-&casekey=072-CF++2000001">CF-2020-00001</a></td>'
+    '<td class="filed">01/01/2020</td>'
+    '<td class="party">SMITH, JOHN <span class="type">Defendant</span></td>'
+    '<td class="case">STATE OF OKLAHOMA VS. SMITH, JOHN</td>'
+    '<td class="offense">THEFT - ST GUILTY PLEA</td>'
+    '</tr></tbody></table></body></html>'
+).encode()
+
+
+@pytest.mark.asyncio
+async def test_server_capped_result_is_partial_even_when_total_consumed():
+    # Regression: "Limited to N" means ODCR TRUNCATED the set, so consuming `total` is still partial.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in ("/search", "/results"):
+            return httpx.Response(200, content=_CAPPED_PAGE)
+        return httpx.Response(200, content=b"<html></html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="smith"), AdapterContext(client))
+    assert res.status == AdapterStatus.OK
+    assert res.total == 1 and len(res.records) == 1
+    assert res.partial is True          # "Limited to 1" -> server-capped (was the bug: False)

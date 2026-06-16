@@ -4,6 +4,9 @@ These don't test any source — they pin the *shape*: required fields, safe muta
 defaults, enum-to-string serialization (which the SSE endpoint + generated frontend
 types depend on), and the registry. Per-source parsing tests live in test_<county>.py.
 """
+import pytest
+from pydantic import ValidationError
+
 from adapters import registry
 from adapters.base import (
     AdapterResult,
@@ -38,6 +41,15 @@ def test_search_query_requires_only_last():
     assert q.first is None and q.full_name == "smith"
     q2 = SearchQuery(last="smith", first="john", middle="q", sex=Sex.MALE, year_of_birth=1990)
     assert q2.full_name == "john q smith"
+
+
+def test_search_query_max_results_has_a_floor_of_one():
+    # Regression (review #13): 0/negative would break every adapter's cap logic, so it's rejected.
+    assert SearchQuery(last="smith").max_results == 25
+    with pytest.raises(ValidationError):
+        SearchQuery(last="smith", max_results=0)
+    with pytest.raises(ValidationError):
+        SearchQuery(last="smith", max_results=-5)
 
 
 def test_adapter_result_serializes_enums_to_strings():

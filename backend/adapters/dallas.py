@@ -220,7 +220,9 @@ class DallasAdapter(Adapter):
 
         out: dict = {"sheet": sheet, "name": None, "year": None, "sex": None, "race": None,
                      "dob": None, "offense": None}
-        m = re.search(r"DEF NAME ([A-Z][A-Z_ ]+?)\s+RACE (\w)\s+SEX (\w)\s+DOB (\d{8})", sheet)
+        # Allow real-name punctuation (apostrophe, hyphen, period, digits/suffixes) in the name —
+        # a bare [A-Z_ ] class made names like O'BRIEN / SMITH-JONES / MARTIN JR fail the whole match.
+        m = re.search(r"DEF NAME ([A-Z][A-Z0-9_'.\- ]+?)\s+RACE (\w)\s+SEX (\w)\s+DOB (\d{8})", sheet)
         if m:
             out["name"] = re.sub(r"\s+", " ", m.group(1).replace("_", " ")).strip()
             out["race"] = m.group(2)

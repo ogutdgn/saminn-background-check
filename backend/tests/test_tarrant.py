@@ -75,6 +75,37 @@ async def test_search_returns_ok_with_records():
     assert res.duration_ms >= 0
 
 
+def _list_json(n_records: int, total: int) -> bytes:
+    import json
+    recs = [{"LastName": "GARCIA", "FirstMiddleName": f"P{i}", "CID": str(1000 + i),
+             "DOB": "1/1/1990", "Sex": "Male"} for i in range(n_records)]
+    return json.dumps({"Records": recs, "TotalRecordCount": total}).encode()
+
+
+@pytest.mark.asyncio
+async def test_search_marks_partial_when_roster_exceeds_page():
+    # Regression (review #1/#3): a capped page (25 returned, 60 in custody) must be `partial`,
+    # not silently presented as the complete current-custody set.
+    def handler(request):
+        return httpx.Response(200, content=_list_json(25, 60))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="garcia", max_results=25), AdapterContext(client))
+    assert res.status == AdapterStatus.OK
+    assert len(res.records) == 25 and res.total == 60
+    assert res.partial is True          # 60 > 25 -> more exist (was the bug: stayed False)
+
+
+@pytest.mark.asyncio
+async def test_search_not_partial_when_complete():
+    def handler(request):
+        return httpx.Response(200, content=_list_json(5, 5))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await adapter.search(SearchQuery(last="garcia"), AdapterContext(client))
+    assert res.partial is False         # 5 == 5 -> complete
+
+
 @pytest.mark.asyncio
 async def test_search_no_results_status():
     async def run():

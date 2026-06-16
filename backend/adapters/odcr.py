@@ -74,6 +74,7 @@ class OdcrAdapter(Adapter):
             html = resp.text
 
             total = self._result_count(html)
+            server_capped = self._is_server_capped(html)   # "Limited to N results" -> truncated by ODCR
             rows = self._parse_rows(html)
             if not rows:
                 if self._is_no_results(html, total):
@@ -103,7 +104,10 @@ class OdcrAdapter(Adapter):
                 if added == 0:
                     break  # nothing new -> reached the end (or a repeated page)
                 if total is not None and len(records) >= total:
-                    break  # consumed everything the server reported (complete)
+                    # consumed everything the server reported — but if that count was ODCR's hard
+                    # cap ("Limited to 1,000 results"), the set is TRUNCATED, so it's still partial.
+                    partial = partial or server_capped
+                    break
                 if AdapterContext.now_ms() >= deadline:
                     partial = True  # out of time budget — more pages exist
                     break
@@ -359,6 +363,13 @@ class OdcrAdapter(Adapter):
             return None
         m = re.search(r"([\d,]+)\s+results?", node.text())
         return int(m.group(1).replace(",", "")) if m else None
+
+    @staticmethod
+    def _is_server_capped(html: str) -> bool:
+        """True when the count is ODCR's hard cap ("Limited to N results") — i.e. the result set is
+        truncated server-side, so it must be reported `partial` even once we've consumed `total`."""
+        node = HTMLParser(html).css_first("#duration")
+        return node is not None and "limited to" in node.text().lower()
 
     @staticmethod
     def _is_no_results(html: str, total: int | None) -> bool:

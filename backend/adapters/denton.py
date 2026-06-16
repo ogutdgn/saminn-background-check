@@ -88,7 +88,9 @@ class DentonAdapter(Adapter):
                 if total == 0 or "No cases matched" in html:
                     return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
                 raise ValueError("results page had no parseable rows and no 0-records marker")
-            partial = len(records) >= self.RESULT_CAP   # capped at the Tyler limit -> more exist
+            # partial if Tyler capped the list (400) OR the page rendered fewer rows than its own
+            # reported Record Count (defensive — a truncated render should never read as complete).
+            partial = len(records) >= self.RESULT_CAP or (total is not None and len(records) < total)
             return self._envelope(AdapterStatus.OK, records, total, start, partial=partial)
         except httpx.TimeoutException as e:
             return self._fail(AdapterStatus.TIMEOUT, start, str(e))

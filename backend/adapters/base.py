@@ -118,7 +118,7 @@ class SearchQuery(BaseModel):
     middle: str | None = None
     sex: Sex | None = None
     year_of_birth: int | None = None
-    max_results: int = 25
+    max_results: int = Field(default=25, ge=1)   # a floor of 1 — 0/negative would break every cap
 
     @property
     def full_name(self) -> str:

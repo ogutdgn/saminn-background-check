@@ -74,12 +74,17 @@ class TarrantAdapter(Adapter):
             records = self._parse_list(resp.content)
             total = json.loads(resp.content).get("TotalRecordCount")
             status = AdapterStatus.OK if records else AdapterStatus.NO_RESULTS
+            # We request jtPageSize=min(max_results,50); if the roster holds more than we
+            # returned, mark partial so the UI shows "N+" and a refine notice (never present a
+            # capped current-custody search as complete).
+            partial = total is not None and len(records) < total
             return AdapterResult(
                 source=self.id,
                 display_name=self.display_name,
                 status=status,
                 records=records,
                 total=total,
+                partial=partial,
                 duration_ms=ctx.now_ms() - start,
             )
         except httpx.TimeoutException as e:

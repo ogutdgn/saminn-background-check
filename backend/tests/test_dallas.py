@@ -78,6 +78,20 @@ async def test_fetch_detail_parses_case_sheet():
     assert "DA CASE ID MC13A6231" in detail and "SETS AND PASSES" in detail   # full sheet kept
 
 
+def test_case_detail_name_with_punctuation_parses():
+    # Regression (review #6): apostrophe / hyphen / suffix names must parse — a bare [A-Z_ ] class
+    # made the whole DEF NAME match fail, blanking name/sex/year.
+    html = (
+        '<html><body><div class="container">'
+        "DEF NAME O&#39;BRIEN-SMITH PATRICK JR RACE W SEX M DOB 03171972 "
+        "OFF THEFT BY CHECK DT 01/01/2020</div></body></html>"
+    )
+    d = adapter._parse_case_detail(html)
+    assert d["name"] == "O'BRIEN-SMITH PATRICK JR"
+    assert d["sex"] == "M"
+    assert d["year"] == "1972"
+
+
 @pytest.mark.asyncio
 async def test_fetch_detail_returns_none_on_error():
     def handler(request):
