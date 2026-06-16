@@ -32,7 +32,7 @@
 3. Add tests; keep the suite green.
 4. **Checkpoint** via `plan-tracking`; PR for review.
 
-## CURRENT PHASE → Phase 2: Sources (in progress) — 4 of ~6 live
+## CURRENT PHASE → Phase 2: Sources (in progress) — 5 of ~6 live
 > **Phase 0 ✅** and **Phase 1 ✅** (the vertical slice runs end to end). Dated entries in [last-point.md](last-point.md).
 >
 > **Phase 1 (Scaffold) — core COMPLETE; 2 infra pieces deferred *by design* (not unfinished):**
@@ -44,7 +44,8 @@
 > - [x] Tarrant (T1, http) · [x] Dallas (T2, http) — both live, with photos / case-sheet detail-on-demand.
 > - [x] **ODCR (T2, OK statewide)** — live on `source/odcr`; one adapter for 70+ OK counties.
 > - [x] **Hunt (T2)** — live on `source/hunt`; Sheriff roster + mugshot/charges detail (image source).
-> - [ ] Denton (T3) · [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
+> - [x] **Denton (T3)** — live on `source/denton`; **first Tier-3** (self-hosted Tyler Public Access, stateful `__VIEWSTATE`; `BaseConnKy=DF` was the key). Name + birth-year + charge + disposition.
+> - [ ] Collin (T4, browser — build `browser.py`) · [ ] Fannin (stretch).
 >
 > **Loose ends:** [x] `ARCHITECTURE.md` contract synced (2026-06-15). Open: tune Dallas paging latency
 > (~18 s, worse with a first name — timed out at 30 s on SMITH/JOHN); tighten the Dallas name/DOB parser;

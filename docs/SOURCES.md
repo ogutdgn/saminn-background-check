@@ -34,7 +34,7 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
 | **Dallas County, TX** | Criminal Background Search (HTML form POSTs) | 2 | http | none | — | 🟢 proven | **done** |
 | **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | reCAPTCHA v3 (invisible, non-blocking) | — | 🟢 proven (1000 results) | **done** |
-| **Denton County, TX** | Tyler Public Access, *self-hosted* (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (datacenter IPs may be challenged) | — | 🟢 proven | todo |
+| **Denton County, TX** | Tyler Public Access, *self-hosted* (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
 | **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes with stealth, today) | ✅ mugshots | 🟢 proven | todo |
 | **Fannin County, TX** | Vendor jail site (`offenderindex.com/fannincoga`) | 3–4 | http or browser | **client-side** CAPTCHA (defeatable within rules) | TBD | 🟡 reachable, unproven | todo |
 
@@ -61,7 +61,20 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
   Spike notes + field map: `backend/tests/fixtures/odcr/README.md`.
 - **Denton** — The only *self-hosted* Tyler instance we use. Self-hosted Tyler works;
   the AWS-hosted `*.tylertech.cloud` ones are all Tier-5. Sensitive to IP reputation
-  (on-prem office IP helps).
+  (on-prem office IP helps). **Stage-1 spike (2026-06-15):** Cloudflare passes this
+  environment's IP (not challenged). Cracked the full Tyler Public Access flow for the
+  **JP & County Criminal** name search (`Search.aspx?ID=100`): portal → POST `NodeID`
+  (the "All JP & County Courts" comma-list) → node-aware form → search POST with the
+  magic fields (`SearchType=PARTY`, `SearchMode=NAME`, `NameTypeKy=ALIAS`, the
+  `Boolean.Parse` hidden fields, `SortBy`, replayed `__VIEWSTATE`) → a clean
+  `CaseSearchResults.aspx`. **The 0-record blocker turned out to be `BaseConnKy=DF`**
+  (Defendant) — not CaseTypeIDs (those only apply to Judicial-Officer searches). With
+  `BaseConnKy=DF`, SMITH returns **400 records** (the Tyler cap → `partial`). **Live
+  (`adapters/denton.py`).** The list gives name + **birth date** (we keep the year only),
+  charge, disposition, court, case#, and a `CaseDetail.aspx?CaseID=` deep link (drives
+  `fetch_detail` → Register of Actions). No mugshots. Full detail:
+  `backend/tests/fixtures/denton/README.md`. Worth adding later: the **District Court**
+  module (`../PublicAccessDC/Search.aspx?ID=200`) for felonies.
 - **Collin** — Genuinely browser-only (Blazor Server over SignalR; no REST/JSON
   exists — confirmed historically by a 411 on the negotiate endpoint). This is the
   one source that forces the on-prem-with-browser decision.

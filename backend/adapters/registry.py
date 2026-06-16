@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from .base import Adapter
 from .dallas import DallasAdapter
+from .denton import DentonAdapter
 from .hunt import HuntAdapter
 from .odcr import OdcrAdapter
 from .tarrant import TarrantAdapter
@@ -32,6 +33,7 @@ REGISTRY: list[RegistryEntry] = [
     RegistryEntry(DallasAdapter(), enabled=True),    # Stage 4 — live (pagination handled)
     RegistryEntry(OdcrAdapter(), enabled=True),      # Stage 4 — live (statewide OK; pagination + cap handled)
     RegistryEntry(HuntAdapter(), enabled=True),      # Stage 4 — live (current-custody roster; client-side surname filter)
+    RegistryEntry(DentonAdapter(), enabled=True),    # Stage 4 — live (Tier-3 Tyler Public Access; stateful VIEWSTATE)
 ]
 
 

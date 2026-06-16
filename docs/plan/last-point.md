@@ -7,6 +7,38 @@
 
 ---
 
+## 2026-06-15 (4th session) — merge→main→GitHub; Denton (Tier 3) live: Phase 2 now 5 of ~6
+
+- **Branch:** `source/denton` (Denton work; not yet merged). `main` now consolidated + pushed.
+- **Phase:** **Phase 2 — 5 of ~6 live** (Tarrant, Dallas, ODCR, Hunt, **Denton**). First Tier-3 source.
+- **State summary:** Consolidated all prior Phase-2 work into `main` and pushed to GitHub, then
+  built **Denton** end-to-end — the first **Tier-3** (stateful Tyler Public Access) source.
+- **Done this session:**
+  - **UI:** ODCR "return all" + per-record case sheet; a full professional UI redesign; then —
+    research-led (5-agent design-review workflow) — replaced the per-source grid with **one unified
+    single-column results list** + a sticky control bar (source status/filter chips, sort, sex/
+    birth-year/photo filters). The client-side filters are the fix for big result sets (e.g. ODCR's
+    1,000). Enriched `/api/health` (`display_name`+`has_photos`) → killed the "Odcr County"
+    placeholder + the `IMAGE_SOURCES` hardcode.
+  - **Branch hygiene / GitHub:** merged `source/hunt` (39 commits: 4 sources + engine + API + UI)
+    into `main`; reconciled with the user's pushed **PR #1** (Tarrant/Dallas) — clean, no force,
+    PR preserved — and **pushed `main` to origin** (`origin/main` = the full app). Deleted the
+    superseded `source/{hunt,odcr,tarrant-dallas}` branches. PII fixtures stayed git-ignored.
+  - **Denton (Tier 3), full pipeline, live:** Cloudflare passes this IP. Cracked the Tyler Public
+    Access flow (portal → POST `NodeID` "All JP & County Courts" → node-aware form → search POST →
+    `CaseSearchResults.aspx`) and every magic field by walking the server errors. **The 0-record
+    blocker was `BaseConnKy=DF`** (Defendant), not CaseTypeIDs. `adapters/denton.py` parses 400
+    records (name + **birth year** + charge + disposition + court + `CaseDetail` deep link;
+    `partial` at the 400 cap; `fetch_detail` = Register of Actions). **8 tests; full suite 77.**
+    Verified live (orchestrator ~6.4 s; UI filtered-to-Denton renders correctly).
+- **Next:** **Collin (T4)** — the browser source that finally builds the shared `browser.py`
+  Playwright manager; then **Fannin** (stretch). Merge `source/denton` → `main` (+ push) when ready.
+  Open: Dallas latency; ODCR common-surname timeout (optional cap); Denton **District Court** module
+  (`PublicAccessDC/Search.aspx?ID=200`) for felonies.
+- **Blockers/notes:** none. Denton is sensitive to IP reputation (recon note) but passes from here.
+
+---
+
 ## 2026-06-15 (3rd session) — Hunt live + adversarial review: Phase 2 now 4 of ~6
 
 - **Branch:** `source/hunt` (off `source/odcr`; not merged to `main`).
