@@ -39,10 +39,10 @@ def test_field_mapping_name_dob_charge_disposition():
     assert r.name == "Smith, James Robert"
     assert r.year_of_birth == "1972"                 # year of the list DOB (full birthdate not retained)
     assert [(m.type, m.detail) for m in r.matched_on] == [(MatchType.NAME, "Defendant")]
-    # CaseDetail is session-relative -> no shareable external URL; detail_id packs CaseID + surname
-    # so fetch_detail can re-seed the session before loading it.
+    # CaseDetail is session-relative -> no shareable external URL; detail_id packs CaseID + the
+    # defendant's own last|first so fetch_detail can re-seed the exact session that surfaces this case.
     assert r.source_url is None
-    assert r.raw["detail_id"] == "649089|Smith" and r.raw["case_id"] == "649089"
+    assert r.raw["detail_id"] == "649089|Smith|James" and r.raw["case_id"] == "649089"
     c = r.charges[0]
     assert c.case_no == "00-0151J5"
     assert c.disposition == "z-Traffic Citation Disposed"
@@ -57,6 +57,14 @@ def test_split_name_dob_and_filed_loc():
     assert adapter._split_name_dob("Doe, Jane") == ("Doe, Jane", None)      # no DOB -> year None
     assert adapter._split_filed_loc("01/19/2000 Justice of the Peace Pct #5 Gailey, Barbara") == (
         "01/19/2000", "Justice of the Peace Pct #5 Gailey, Barbara")
+
+
+def test_split_last_first():
+    # detail_id re-seeds with the defendant's own last+first so CaseDetail finds the case in-session
+    assert adapter._split_last_first("Smith, James Robert") == ("Smith", "James")
+    assert adapter._split_last_first("James, Billy") == ("James", "Billy")
+    assert adapter._split_last_first("Cher") == ("Cher", "")          # mononym -> no first
+    assert adapter._split_last_first("O'Neil, Sean") == ("O'Neil", "Sean")
 
 
 def test_no_results_signal():
@@ -143,8 +151,10 @@ def test_parse_detail_builds_case_sheet():
 @pytest.mark.asyncio
 async def test_fetch_detail_reseeds_session_then_loads_case():
     # CaseDetail is session-relative -> fetch_detail must run a (POST) search to seed the session
-    # before the (GET) CaseDetail load. record_id = "<CaseID>|<surname>".
+    # before the (GET) CaseDetail load. record_id = "<CaseID>|<last>|<first>"; the re-seed search must
+    # carry the defendant's own last+first (a surname-only re-seed can push the case past Tyler's cap).
     seen: list[str] = []
+    search_body: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         p = request.url.path
@@ -153,11 +163,15 @@ async def test_fetch_detail_reseeds_session_then_loads_case():
             assert request.url.params.get("CaseID") == "649089"
             return httpx.Response(200, content=DETAIL)
         if request.method == "POST" and p.endswith("/Search.aspx"):
-            return httpx.Response(200, content=FORM)        # node POST + search POST
+            body = request.content.decode()
+            if "LastName" in body and "SearchSubmit" in body:        # the real re-seed search POST
+                from urllib.parse import parse_qs
+                search_body.update({k: v[0] for k, v in parse_qs(body, keep_blank_values=True).items()})
+            return httpx.Response(200, content=FORM)                  # node POST + search POST
         return httpx.Response(200, content=b"<html></html>")  # GET default.aspx
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        rec = await adapter.fetch_detail("649089|Smith", AdapterContext(client))
+        rec = await adapter.fetch_detail("649089|Smith|James", AdapterContext(client))
 
     assert rec is not None
     assert rec.source == "denton" and rec.source_url is None
@@ -165,11 +179,14 @@ async def test_fetch_detail_reseeds_session_then_loads_case():
     assert "EVENTS & ORDERS" in (rec.raw.get("detail_text") or "")
     assert any(s.startswith("POST") and s.endswith("/Search.aspx") for s in seen)   # seeded the session
     assert any(s.startswith("GET") and s.endswith("/CaseDetail.aspx") for s in seen)
+    # the re-seed narrows by the defendant's own last+first so their case is in the result set
+    assert search_body["LastName"] == "Smith" and search_body["FirstName"] == "James"
 
 
 @pytest.mark.asyncio
 async def test_fetch_detail_bad_id_returns_none():
     async with httpx.AsyncClient(transport=httpx.MockTransport(
         lambda r: httpx.Response(200, content=b"ok"))) as client:
-        assert await adapter.fetch_detail("nopipe", AdapterContext(client)) is None      # no "|"
-        assert await adapter.fetch_detail("abc|Smith", AdapterContext(client)) is None   # non-numeric CaseID
+        assert await adapter.fetch_detail("nopipe", AdapterContext(client)) is None      # no CaseID/name
+        assert await adapter.fetch_detail("abc|Smith|James", AdapterContext(client)) is None  # non-numeric CaseID
+        assert await adapter.fetch_detail("649089||", AdapterContext(client)) is None     # empty last name

@@ -99,16 +99,22 @@ class DentonAdapter(Adapter):
 
     async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
         """Pull one case's full record (CaseDetail.aspx = Register of Actions): all charges +
-        a readable case sheet (Party / Charge / Events / Financial). `record_id` is "<CaseID>|<last>".
+        a readable case sheet (Party / Charge / Events / Financial). `record_id` is
+        "<CaseID>|<last>|<first>" (first may be empty).
 
-        CaseDetail.aspx is SESSION-RELATIVE — it only loads after the session has run a search that
-        surfaced the case (a cold GET returns a Public Access Error). So we re-run the surname search
-        (the cheapest proven way to seed the session), THEN GET CaseDetail. Never raises -> None."""
+        CaseDetail.aspx is SESSION-RELATIVE — it only loads after the session has run a search whose
+        result set CONTAINS this case (a cold GET, or a search that doesn't surface it, returns a
+        Public Access Error). So we re-run the defendant's own last+first search — which always
+        surfaces their own case, where a surname-only search can push older cases past Tyler's 400
+        cap — THEN GET CaseDetail. Never raises -> None."""
         try:
-            case_id, _, surname = record_id.partition("|")
-            if not case_id.isdigit() or not surname.strip():
+            parts = record_id.split("|")
+            case_id = parts[0]
+            last = parts[1].strip() if len(parts) > 1 else ""
+            first = parts[2].strip() if len(parts) > 2 else ""
+            if not case_id.isdigit() or not last:
                 return None
-            # seed the session with a search that includes this case (results discarded)
+            # seed the session with the same narrow search that surfaced this case (results discarded)
             await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
             nf = await ctx.http.post(
                 _SEARCH, data={"NodeID": _ALL_COURTS, "NodeDesc": "All JP & County Courts"},
@@ -116,7 +122,7 @@ class DentonAdapter(Adapter):
             )
             nf.raise_for_status()
             await ctx.http.post(
-                _SEARCH, data=self._search_form(nf.text, SearchQuery(last=surname.strip())),
+                _SEARCH, data=self._search_form(nf.text, SearchQuery(last=last, first=first or None)),
                 headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
             )
             resp = await ctx.http.get(
@@ -190,11 +196,14 @@ class DentonAdapter(Adapter):
             filed, court = self._split_filed_loc(filed_loc)
             m = _CASEID_RE.search(link.attributes.get("href") or "")
             case_id = m.group(1) if m else None
-            # detail_id packs the CaseID AND the surname — fetch_detail must re-run a search to seed
-            # the session before CaseDetail.aspx (session-relative) will load. No external source_url:
-            # the CaseDetail URL only works inside a searched session, so a shareable link would 404.
-            surname = name.split(",")[0].strip()
-            detail_id = f"{case_id}|{surname}" if case_id and surname else None
+            # detail_id packs the CaseID AND the defendant's own last|first — fetch_detail must re-run a
+            # search to seed the session before CaseDetail.aspx (session-relative) will load, and Tyler
+            # only loads a case that's in the session's CURRENT result set. Surname-only would re-seed a
+            # broader set whose 400-cap can push older cases out (then CaseDetail errors); re-seeding with
+            # the defendant's own last+first always surfaces their own case. No external source_url: the
+            # CaseDetail URL only works inside a searched session, so a shareable link would 404.
+            last, first = self._split_last_first(name)
+            detail_id = f"{case_id}|{last}|{first}" if case_id and last else None
 
             out.append(
                 InmateRecord(
@@ -273,6 +282,15 @@ class DentonAdapter(Adapter):
             if t.css_first("a[href*=CaseDetail]") is not None:
                 return t
         return None
+
+    @staticmethod
+    def _split_last_first(name: str) -> tuple[str, str]:
+        """"Last, First Middle" -> ("Last", "First"). First is the first token after the comma (Tyler's
+        name search is a prefix match, so the first given name is enough to surface the defendant's own
+        case). Returns ("", "") components empty when absent."""
+        last, _, rest = (name or "").partition(",")
+        first = rest.strip().split(" ", 1)[0] if rest.strip() else ""
+        return last.strip(), first
 
     @staticmethod
     def _split_name_dob(cell: str) -> tuple[str | None, str | None]:

@@ -19,7 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 from adapters import registry
 from adapters.base import Adapter, AdapterContext, AdapterResult, InmateRecord, SearchQuery
 from core.audit import AuditLog
-from core.orchestrator import _USER_AGENT, run_search
+from core.orchestrator import _DEFAULT_TIMEOUT_S, _USER_AGENT, run_search
 
 _DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "audit.sqlite"
 
@@ -117,10 +117,14 @@ async def record_detail(
     adapter = next((a for a in adapters if a.id == source), None)
     if adapter is None:
         raise HTTPException(status_code=404, detail=f"unknown or disabled source: {source}")
+    # Honor the adapter's own budget (mirrors the orchestrator). A Tier-3 detail like Denton's
+    # re-seeds the session (GET + 2 POSTs + GET) through Cloudflare and declares timeout_s=45 — a
+    # flat 20s here was cutting that short on a slow moment -> None -> "Couldn't load the full record".
+    budget = adapter.timeout_s or _DEFAULT_TIMEOUT_S
     async with httpx.AsyncClient(
-        headers={"User-Agent": _USER_AGENT}, follow_redirects=True, timeout=httpx.Timeout(20.0)
+        headers={"User-Agent": _USER_AGENT}, follow_redirects=True, timeout=httpx.Timeout(budget)
     ) as client:
-        record = await adapter.fetch_detail(record_id, AdapterContext(client, timeout_s=20.0))
+        record = await adapter.fetch_detail(record_id, AdapterContext(client, timeout_s=budget))
     if record is None:
         raise HTTPException(status_code=404, detail="no detail available for this record")
     return record
