@@ -44,6 +44,9 @@ class DallasAdapter(Adapter):
     display_name = "Dallas County"
     transport = "http"
     tier = 2
+    # Session-relative detail (POST /searchByCase) -> no per-record deep link; the UI links here +
+    # shows the case number to look up.
+    portal_url = "https://www.dallascounty.org/criminalBackgroundSearch/"
     # No timeout override: Dallas self-limits its paging to the engine budget (budget_margin_s),
     # so it already returns within the default ~20s. A bigger budget would just make it page longer.
 

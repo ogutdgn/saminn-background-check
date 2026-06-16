@@ -77,6 +77,7 @@ async def health() -> dict:
                 "display_name": a.display_name,
                 "transport": a.transport,
                 "has_photos": a.has_photos,
+                "portal_url": a.portal_url,
             }
             for a in registry.enabled_adapters()
         ],

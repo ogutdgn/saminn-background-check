@@ -73,6 +73,9 @@ async def test_health_lists_enabled_sources():
     assert by_id["tarrant"]["display_name"] == "Tarrant County"
     assert by_id["tarrant"]["has_photos"] is True          # jail roster -> mugshots
     assert by_id["dallas"]["has_photos"] is False          # court records -> no mugshots
+    # every source exposes a public portal URL so the UI can always offer a navigable source link
+    # (even when a record has no per-record deep link); the frontend hardcodes no per-source URLs.
+    assert all(s.get("portal_url", "").startswith("https://") for s in body["sources"])
 
 
 @pytest.mark.asyncio

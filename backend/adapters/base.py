@@ -171,6 +171,11 @@ class Adapter(ABC):
                                      # default. Slow court systems (ODCR's cold POST ~16s, Dallas
                                      # paging a common surname ~19s) raise this so they aren't cut
                                      # off mid-search, while fast jail rosters keep the tight default.
+    portal_url: str | None = None  # the source's public landing/search page — a stable URL a human
+                                    # can open. Many court/jail sites are session- or POST-gated and
+                                    # CANNOT expose a per-record deep link (InmateRecord.source_url),
+                                    # so the UI falls back to this portal + the case number. /api/health
+                                    # surfaces it so the frontend hardcodes no per-source URLs.
 
     @abstractmethod
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:

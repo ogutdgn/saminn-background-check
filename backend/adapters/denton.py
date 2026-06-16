@@ -58,6 +58,9 @@ class DentonAdapter(Adapter):
     tier = 3
     has_photos = False
     timeout_s = 45.0   # Tier-3 multi-step (GET + 2 POSTs) through Cloudflare; give margin
+    # CaseDetail.aspx is session-relative -> no per-record deep link; the UI links to the portal home
+    # and shows the case number to look up.
+    portal_url = "https://justice1.dentoncounty.gov/PublicAccess/default.aspx"
     RESULT_CAP = 400   # Tyler Public Access caps the result list
 
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:

@@ -58,6 +58,7 @@ class OdcrAdapter(Adapter):
     transport = "http"
     tier = 2
     timeout_s = 45.0   # POST /search is cold-slow (~16s) on the first hit of a session; give margin
+    portal_url = "https://odcr.com/"   # records also carry a per-record deep link (/detail?court=&casekey=)
 
     max_pages = 70         # page the FULL result set (server caps at 1,000 / ~67 pages of 15)
     page_delay_s = 0.05    # politeness pause between pages (small — it's just a results pager GET)

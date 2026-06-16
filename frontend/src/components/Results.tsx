@@ -31,6 +31,9 @@ export interface SourceMeta {
   display_name: string
   transport: string
   has_photos: boolean
+  /** The source's public landing/search page — a stable URL to open when a record has no
+   *  per-record deep link (session/POST-gated court & jail sites). May be absent on older payloads. */
+  portal_url?: string | null
 }
 
 type Tone = "ok" | "muted" | "warn" | "danger"
@@ -395,6 +398,7 @@ export function Results({
               onRetry={() => openDid && openCk && loadDetail(openRec.source.id, openDid, openCk)}
               hasPhotos={openRec.source.has_photos}
               sourceTitle={openRec.source.display_name}
+              portalUrl={openRec.source.portal_url}
             />
           )}
         </DialogContent>
@@ -655,6 +659,7 @@ function RecordDetail({
   onRetry,
   hasPhotos,
   sourceTitle,
+  portalUrl,
 }: {
   rec: InmateRecord
   detail?: InmateRecord
@@ -663,6 +668,7 @@ function RecordDetail({
   onRetry: () => void
   hasPhotos: boolean
   sourceTitle: string
+  portalUrl?: string | null
 }) {
   const name = detail?.name || rec.name
   const photo = detail?.photo_base64
@@ -672,6 +678,14 @@ function RecordDetail({
   const sheet = rawText(detail, "detail_text")
   const meta = [yob ? `b. ${yob}` : null, sexLabel(sex)].filter(Boolean).join(" · ")
   const showPortrait = hasPhotos || !!photo || (!loading && !!detail)
+  // A navigable link to the origin for EVERY record: prefer a per-record deep link (source_url), and
+  // when the source can't provide one (session/POST-gated court & jail sites), fall back to its public
+  // portal + the case number to look up — never a dead/bouncing link.
+  const deepLink = detail?.source_url || rec.source_url
+  const caseRef =
+    charges.map((c) => c.case_no).find(Boolean) ||
+    rawText(detail, "case_no") ||
+    rawText(rec, "case_no")
 
   return (
     <>
@@ -709,16 +723,44 @@ function RecordDetail({
               </li>
             ))}
           </ul>
-          {rec.source_url && (
-            <a
-              href={rec.source_url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
-            >
-              Open the source record <ExternalLink className="size-3" />
-            </a>
-          )}
+          <div className="mt-1 border-t pt-2">
+            <div className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+              Source
+            </div>
+            {deepLink ? (
+              <a
+                href={deepLink}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+              >
+                Open this record on {sourceTitle} <ExternalLink className="size-3" />
+              </a>
+            ) : portalUrl ? (
+              <div className="space-y-1 text-xs">
+                <a
+                  href={portalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary inline-flex items-center gap-1 underline-offset-4 hover:underline"
+                >
+                  Open the {sourceTitle} portal <ExternalLink className="size-3" />
+                </a>
+                <p className="text-muted-foreground">
+                  This site opens a record only from within a live search
+                  {caseRef ? (
+                    <>
+                      {" "}
+                      — look up <span className="text-foreground font-medium">#{caseRef}</span> there
+                    </>
+                  ) : null}
+                  .
+                </p>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-xs">No public link available for this source.</p>
+            )}
+          </div>
         </div>
       </div>
 

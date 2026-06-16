@@ -53,6 +53,8 @@ class HuntAdapter(Adapter):
     transport = "http"
     tier = 2
     has_photos = True   # Sheriff jail roster -> mugshot via fetch_detail (booking.asp)
+    # Detail is POST-only (booking.asp) -> no per-record deep link; the UI links to the roster portal.
+    portal_url = "https://apps.huntcounty.net/jail/"
 
     RESULTS_URL = f"{_BASE}/results.asp"
     BOOKING_URL = f"{_BASE}/booking.asp"

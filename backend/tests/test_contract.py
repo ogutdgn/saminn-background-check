@@ -80,3 +80,11 @@ def test_registry_holds_built_sources_and_they_are_enabled():
     assert {"tarrant", "dallas"} <= ids                       # built sources registered
     enabled = {a.id for a in registry.enabled_adapters()}
     assert {"tarrant", "dallas"} <= enabled                   # both live (Stage 4)
+
+
+def test_every_enabled_source_exposes_a_public_portal_url():
+    # The UI always offers a navigable "source" link: a per-record deep link (source_url) when one
+    # exists, else this portal + the case number. So every live source MUST declare a portal_url —
+    # fail loud here if a future adapter forgets it (rather than the UI silently dropping the link).
+    for a in registry.enabled_adapters():
+        assert isinstance(a.portal_url, str) and a.portal_url.startswith("https://"), a.id
