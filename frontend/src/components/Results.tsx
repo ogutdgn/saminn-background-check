@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   CheckCircle2,
   ChevronRight,
@@ -118,6 +118,7 @@ export function Results({
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [detailError, setDetailError] = useState(false)
   const [visible, setVisible] = useState(INITIAL_VISIBLE)
+  const detailReq = useRef(0) // monotonic id so a stale detail fetch can't clobber the open dialog
 
   // filters / sort
   const [off, setOff] = useState<Set<string>>(new Set()) // disabled source ids
@@ -193,9 +194,13 @@ export function Results({
     if (ck && !details[ck]) await loadDetail(row.source.id, did!, ck)
   }
   async function loadDetail(source: string, did: string, ck: string) {
+    // Guard the shared dialog flags against an out-of-order resolve: if a newer open/retry started
+    // while this fetch was in flight, drop this result so it can't clobber the current dialog.
+    const reqId = ++detailReq.current
     setLoadingDetail(true)
     setDetailError(false)
     const d = await fetchDetail(source, did)
+    if (detailReq.current !== reqId) return
     if (d) setDetails((prev) => ({ ...prev, [ck]: d }))
     else setDetailError(true)
     setLoadingDetail(false)
@@ -226,7 +231,9 @@ export function Results({
     .map((s) => ({ s, r: results[s.id] }))
     .filter(({ r }) => r && (r.partial || r.status === "error" || r.status === "timeout"))
 
-  const allDone = !searching && sources.length > 0 && sources.every((s) => results[s.id])
+  // The stream is done when searching ends — even if it errored mid-way and some sources never
+  // reported (don't require every source to have a result, or the empty state would never show).
+  const allDone = !searching && sources.length > 0
   const noneMatched = allDone && merged.length === 0
 
   return (

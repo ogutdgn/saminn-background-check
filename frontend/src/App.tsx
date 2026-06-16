@@ -35,12 +35,15 @@ export default function App() {
     setResults({})
     setSubmitted({ last: lastName, first: first.trim() })
     setSearching(true)
+    // Ignore callbacks from a search that's been superseded by a newer one (its abort can resolve
+    // late) — only the active controller may touch results/searching state.
+    const active = () => abortRef.current === ac
     await search(
       { last: lastName, first: first.trim() || undefined, max_results: 25 },
       {
-        onResult: (r) => setResults((prev) => ({ ...prev, [r.source]: r })),
-        onDone: () => setSearching(false),
-        onError: () => setSearching(false),
+        onResult: (r) => active() && setResults((prev) => ({ ...prev, [r.source]: r })),
+        onDone: () => active() && setSearching(false),
+        onError: () => active() && setSearching(false),
       },
       ac.signal,
     )
