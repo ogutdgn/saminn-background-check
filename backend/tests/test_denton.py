@@ -17,6 +17,7 @@ FIX = Path(__file__).parent / "fixtures" / "denton"
 FORM = (FIX / "00_search_form_ID100.html").read_bytes()           # stands in for the node-aware form
 MULTI = (FIX / "results_smith_multi.html").read_bytes()           # 400 records
 NONE = (FIX / "results_no-results.html").read_bytes()             # 0 records
+DETAIL = (FIX / "detail_caseid_649089.html").read_bytes()         # one case's Register of Actions
 
 adapter = DentonAdapter()
 
@@ -38,8 +39,10 @@ def test_field_mapping_name_dob_charge_disposition():
     assert r.name == "Smith, James Robert"
     assert r.year_of_birth == "1972"                 # year of the list DOB (full birthdate not retained)
     assert [(m.type, m.detail) for m in r.matched_on] == [(MatchType.NAME, "Defendant")]
-    assert r.source_url == "https://justice1.dentoncounty.gov/PublicAccess/CaseDetail.aspx?CaseID=649089"
-    assert r.raw["detail_id"] == "649089"
+    # CaseDetail is session-relative -> no shareable external URL; detail_id packs CaseID + surname
+    # so fetch_detail can re-seed the session before loading it.
+    assert r.source_url is None
+    assert r.raw["detail_id"] == "649089|Smith" and r.raw["case_id"] == "649089"
     c = r.charges[0]
     assert c.case_no == "00-0151J5"
     assert c.disposition == "z-Traffic Citation Disposed"
@@ -124,3 +127,49 @@ async def test_search_error_is_isolated():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         res = await adapter.search(SearchQuery(last="smith"), AdapterContext(client))
     assert res.status == AdapterStatus.ERROR and res.error      # never raises out of search()
+
+
+# -- fetch_detail (session-relative CaseDetail) --------------------------
+
+def test_parse_detail_builds_case_sheet():
+    d = adapter._parse_detail(DETAIL.decode("utf-8", "replace"))
+    assert d["case_no"] == "00-0151J5"
+    assert d["charges"] and "SPEEDING" in (d["charges"][0].offense or "")
+    sheet = d["sheet"]
+    assert "PARTY INFORMATION" in sheet and "CHARGE INFORMATION" in sheet and "EVENTS & ORDERS" in sheet
+    assert "Smith, James Robert" in sheet
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_reseeds_session_then_loads_case():
+    # CaseDetail is session-relative -> fetch_detail must run a (POST) search to seed the session
+    # before the (GET) CaseDetail load. record_id = "<CaseID>|<surname>".
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p = request.url.path
+        seen.append(f"{request.method} {p}")
+        if p.endswith("/CaseDetail.aspx"):
+            assert request.url.params.get("CaseID") == "649089"
+            return httpx.Response(200, content=DETAIL)
+        if request.method == "POST" and p.endswith("/Search.aspx"):
+            return httpx.Response(200, content=FORM)        # node POST + search POST
+        return httpx.Response(200, content=b"<html></html>")  # GET default.aspx
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        rec = await adapter.fetch_detail("649089|Smith", AdapterContext(client))
+
+    assert rec is not None
+    assert rec.source == "denton" and rec.source_url is None
+    assert rec.raw["case_no"] == "00-0151J5"
+    assert "EVENTS & ORDERS" in (rec.raw.get("detail_text") or "")
+    assert any(s.startswith("POST") and s.endswith("/Search.aspx") for s in seen)   # seeded the session
+    assert any(s.startswith("GET") and s.endswith("/CaseDetail.aspx") for s in seen)
+
+
+@pytest.mark.asyncio
+async def test_fetch_detail_bad_id_returns_none():
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, content=b"ok"))) as client:
+        assert await adapter.fetch_detail("nopipe", AdapterContext(client)) is None      # no "|"
+        assert await adapter.fetch_detail("abc|Smith", AdapterContext(client)) is None   # non-numeric CaseID

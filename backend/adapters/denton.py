@@ -99,14 +99,28 @@ class DentonAdapter(Adapter):
 
     async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
         """Pull one case's full record (CaseDetail.aspx = Register of Actions): all charges +
-        a readable case sheet (Party / Charge / Events). `record_id` is the CaseID. The flow is
-        stateful, so we re-establish the session first. Never raises -> None on failure."""
+        a readable case sheet (Party / Charge / Events / Financial). `record_id` is "<CaseID>|<last>".
+
+        CaseDetail.aspx is SESSION-RELATIVE — it only loads after the session has run a search that
+        surfaced the case (a cold GET returns a Public Access Error). So we re-run the surname search
+        (the cheapest proven way to seed the session), THEN GET CaseDetail. Never raises -> None."""
         try:
-            if not record_id.isdigit():
+            case_id, _, surname = record_id.partition("|")
+            if not case_id.isdigit() or not surname.strip():
                 return None
+            # seed the session with a search that includes this case (results discarded)
             await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
+            nf = await ctx.http.post(
+                _SEARCH, data={"NodeID": _ALL_COURTS, "NodeDesc": "All JP & County Courts"},
+                timeout=ctx.timeout_s,
+            )
+            nf.raise_for_status()
+            await ctx.http.post(
+                _SEARCH, data=self._search_form(nf.text, SearchQuery(last=surname.strip())),
+                headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
+            )
             resp = await ctx.http.get(
-                f"{_HOST}/CaseDetail.aspx", params={"CaseID": record_id},
+                f"{_HOST}/CaseDetail.aspx", params={"CaseID": case_id},
                 headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
             )
             resp.raise_for_status()
@@ -115,11 +129,11 @@ class DentonAdapter(Adapter):
                 return None
             return InmateRecord(
                 source=self.id,
-                source_url=f"{_HOST}/CaseDetail.aspx?CaseID={record_id}",
-                name="",  # the list record already carries the matched name; merged in the UI
+                source_url=None,   # CaseDetail is session-relative — no shareable external URL
+                name="",           # the list record already carries the matched name; merged in the UI
                 matched_on=[MatchInfo(type=MatchType.NAME)],
                 charges=d["charges"],
-                raw={"case_id": record_id, "case_no": d["case_no"], "detail_text": d["sheet"]},
+                raw={"case_id": case_id, "case_no": d["case_no"], "detail_text": d["sheet"]},
             )
         except Exception:
             return None
@@ -174,13 +188,18 @@ class DentonAdapter(Adapter):
             if not name:
                 continue
             filed, court = self._split_filed_loc(filed_loc)
-            case_id = (_CASEID_RE.search(link.attributes.get("href") or "") or [None, None])[1] \
-                if _CASEID_RE.search(link.attributes.get("href") or "") else None
+            m = _CASEID_RE.search(link.attributes.get("href") or "")
+            case_id = m.group(1) if m else None
+            # detail_id packs the CaseID AND the surname — fetch_detail must re-run a search to seed
+            # the session before CaseDetail.aspx (session-relative) will load. No external source_url:
+            # the CaseDetail URL only works inside a searched session, so a shareable link would 404.
+            surname = name.split(",")[0].strip()
+            detail_id = f"{case_id}|{surname}" if case_id and surname else None
 
             out.append(
                 InmateRecord(
                     source=self.id,
-                    source_url=f"{_HOST}/CaseDetail.aspx?CaseID={case_id}" if case_id else None,
+                    source_url=None,
                     name=name,
                     year_of_birth=year,           # year of the list DOB (full birthdate not retained)
                     sex=None,                     # not on the Denton list
@@ -195,7 +214,7 @@ class DentonAdapter(Adapter):
                     ],
                     raw={
                         "case_id": case_id,
-                        "detail_id": case_id,      # CaseID -> fetch_detail / UI case sheet
+                        "detail_id": detail_id,    # "<CaseID>|<surname>" -> fetch_detail / UI case sheet
                         "case_no": case_no or None,
                         "citation": citation or None,
                         "court": court,
@@ -205,23 +224,45 @@ class DentonAdapter(Adapter):
             )
         return out
 
+    _DETAIL_SECTIONS = (
+        "Party Information", "Charge Information", "Events & Orders of the Court", "Financial Information",
+    )
+
     def _parse_detail(self, html: str) -> dict:
-        """Register of Actions -> readable case sheet + the full charge list."""
+        """The CaseDetail "Register of Actions" -> a readable case sheet + the charge list. The page
+        has no single content container; each section is a <table> headed by .ssCaseDetailSectionTitle."""
         tree = HTMLParser(html)
         out: dict = {"case_no": None, "charges": [], "sheet": ""}
-        container = tree.css_first(".ssCaseDetailBody") or tree.body
-        if container is None:
+        body = tree.body
+        if body is None:
             return out
-        text = container.text(separator="\n")
-        lines = [ln.replace("\xa0", " ").rstrip() for ln in text.split("\n") if ln.strip()]
-        out["sheet"] = "\n".join(lines)
-        m = re.search(r"Case No\.\s*([A-Za-z0-9\-]+)", out["sheet"])
+        m = re.search(r"Case No\.?\s*\n?\s*([A-Za-z0-9\-]+)", body.text(separator="\n"))
         out["case_no"] = m.group(1) if m else None
-        # charges: any line under the charge section (best-effort; the list already has the primary)
-        for row in tree.css("table tr"):
-            tds = [c.text(strip=True) for c in row.css("td")]
-            if len(tds) >= 2 and tds[0] and re.match(r"^\d+\.?$", tds[0]) and len(tds[1]) > 3:
-                out["charges"].append(Charge(offense=tds[1], extra={"detail": " ".join(tds[2:]) or None}))
+
+        lines: list[str] = []
+        for tbl in tree.css("table"):
+            head = tbl.css_first(".ssCaseDetailSectionTitle")
+            if head is None:
+                continue
+            title = head.text(strip=True)
+            if title not in self._DETAIL_SECTIONS:
+                continue
+            rows = [re.sub(r"\s+", " ", ln).strip()
+                    for ln in tbl.text(separator="\n").split("\n") if ln.strip()]
+            rows = [ln for ln in rows if ln != title]
+            lines.append(title.upper())
+            lines += ["  " + ln for ln in rows[:30]]   # cap each section (the docket can be long)
+            lines.append("")
+            if title == "Charge Information":
+                for row in tbl.css("tr"):
+                    cells = [c.text(strip=True) for c in row.css("td")]
+                    if len(cells) >= 2 and re.match(r"^\d+\.$", cells[0]) and len(cells[1]) > 3:
+                        out["charges"].append(Charge(
+                            offense=cells[1],
+                            extra={"statute": cells[2] if len(cells) > 2 else None,
+                                   "level": cells[3] if len(cells) > 3 else None},
+                        ))
+        out["sheet"] = "\n".join(lines).strip()
         return out
 
     # -- helpers -----------------------------------------------------------
