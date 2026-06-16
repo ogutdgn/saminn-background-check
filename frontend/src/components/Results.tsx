@@ -53,12 +53,14 @@ const SOURCE_KIND: Record<string, string> = {
   dallas: "Criminal court records · TX",
   hunt: "Sheriff jail roster · TX",
   odcr: "Statewide court records · OK",
+  denton: "Criminal court records · TX",
 }
 const SOURCE_SHORT: Record<string, string> = {
   tarrant: "Tarrant · TX",
   dallas: "Dallas · TX",
   hunt: "Hunt · TX",
   odcr: "ODCR · OK",
+  denton: "Denton · TX",
 }
 // A stable per-source tint for the row chip (text/border only — distinct from status tones).
 const SOURCE_TINT: Record<string, string> = {
@@ -66,6 +68,7 @@ const SOURCE_TINT: Record<string, string> = {
   dallas: "border-violet-200 bg-violet-50 text-violet-700",
   hunt: "border-teal-200 bg-teal-50 text-teal-700",
   odcr: "border-orange-200 bg-orange-50 text-orange-700",
+  denton: "border-rose-200 bg-rose-50 text-rose-700",
 }
 function tint(id: string) {
   return SOURCE_TINT[id] ?? "border-zinc-200 bg-zinc-50 text-zinc-600"
@@ -736,6 +739,7 @@ function RecordDetail({
 const CASE_SHEET_HEADERS: Record<string, string> = {
   dallas: "Dallas County · Felony & Misdemeanor Courts · Case Information",
   odcr: "Oklahoma · On Demand Court Records · Case Record",
+  denton: "Denton County · Tyler Public Access · Case Detail",
 }
 function CaseSheet({
   text,
