@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .base import Adapter
+from .collin import CollinAdapter
 from .dallas import DallasAdapter
 from .denton import DentonAdapter
 from .hunt import HuntAdapter
@@ -34,6 +35,7 @@ REGISTRY: list[RegistryEntry] = [
     RegistryEntry(OdcrAdapter(), enabled=True),      # Stage 4 — live (statewide OK; pagination + cap handled)
     RegistryEntry(HuntAdapter(), enabled=True),      # Stage 4 — live (current-custody roster; client-side surname filter)
     RegistryEntry(DentonAdapter(), enabled=True),    # Stage 4 — live (Tier-3 Tyler Public Access; stateful VIEWSTATE)
+    RegistryEntry(CollinAdapter(), enabled=False),   # Stage 2 — adapter built; needs live fixture + Stage 4 verify
 ]
 
 

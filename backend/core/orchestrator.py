@@ -40,6 +40,7 @@ async def run_search(
     audit: AuditLog | None = None,
     staff: str | None = None,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
+    browser=None,  # core.browser.BrowserManager | None — passed to browser-tier adapters
 ) -> AsyncIterator[AdapterResult]:
     """Yield one AdapterResult per source, in completion order (fastest first).
 
@@ -66,7 +67,11 @@ async def run_search(
         timeout=httpx.Timeout(client_timeout),
     ) as client:
         pending = [
-            _run_one(a, query, AdapterContext(client, timeout_s=budgets[a.id]), budgets[a.id])
+            _run_one(
+                a, query,
+                AdapterContext(client, timeout_s=budgets[a.id], browser=browser if a.transport == "browser" else None),
+                budgets[a.id],
+            )
             for a in sources
         ]
         for completed in asyncio.as_completed(pending):
