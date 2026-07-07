@@ -135,14 +135,24 @@ class AdapterContext:
 
     Holds the shared, *injectable* transports plus a monotonic clock. Fixture tests
     construct one with an httpx client wired to a MockTransport, so adapter code is
-    byte-for-byte identical in production and in tests. The browser manager and the
-    result cache get added here when those subsystems land — adapters should treat
-    this as the only way they reach the outside world.
+    byte-for-byte identical in production and in tests. Adapters must treat this as
+    the only way they reach the outside world — never create their own httpx client
+    or Playwright browser.
+
+    `browser` is None for HTTP-tier adapters; Tier-4 browser adapters receive a live
+    BrowserManager here (started by the app lifespan and wired in by the orchestrator).
     """
 
-    def __init__(self, http: httpx.AsyncClient, *, timeout_s: float = 20.0) -> None:
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        *,
+        timeout_s: float = 20.0,
+        browser=None,  # BrowserManager | None  (import kept lazy to avoid circular dep)
+    ) -> None:
         self.http = http
         self.timeout_s = timeout_s
+        self.browser = browser
 
     @staticmethod
     def now_ms() -> int:

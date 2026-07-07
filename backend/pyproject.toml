@@ -10,6 +10,8 @@ dependencies = [
     "fastapi>=0.110",  # the web app + auto OpenAPI (frontend types)
     "sse-starlette>=2.0",  # Server-Sent Events response for /api/search
     "uvicorn[standard]>=0.29",  # ASGI server to run the app
+    "playwright>=1.44",         # headless browser for Tier-4 (browser-only) sources
+    "playwright-stealth>=1.0",  # patches navigator.webdriver + JS fingerprints (Incapsula bypass)
 ]
 
 [project.optional-dependencies]
