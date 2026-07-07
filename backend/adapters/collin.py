@@ -57,13 +57,16 @@ _PHOTO_URL = f"{_HOST}/JudicialOnlineSearch2/api/Inmate/{{so}}/Photo"
 # MudBlazor markup changes. The app is Blazor Server, so selectors target rendered HTML.
 _SEL_SEARCH = "input[placeholder='Search']"
 _SEL_ROWS_PER_PAGE = "div.mud-select input"          # the rows-per-page MudSelect inside MudTablePager
-_SEL_TAB_INMATE = "div.mud-tab:first-child"           # "Inmate (N)" tab button
-_SEL_TABLE_ROWS = "div[role='tabpanel'] table tbody tr"  # rows in the active tab panel
+_SEL_TAB_INMATE = "div.mud-tab:first-child"  # "Inmate (N)" tab button (first of three)
+_SEL_TABLE_ROWS = "table:first-of-type tbody tr"  # Inmate table is always first on page
 
 # After typing, SignalR debounce + round-trip is typically < 1 s on LAN.
 # We wait up to 10 s for the first row to appear, then allow 1 s for the count to settle.
 _WAIT_FIRST_ROW_MS = 10_000
 _SETTLE_MS = 1_200
+
+# Regex to pull the Inmate count from the tab label "Inmate (54)" → 54
+_TAB_COUNT_RE = re.compile(r"Inmate\s*\((\d[\d,]*)\)")
 
 _NAME_RE = re.compile(r"^([^,]+),\s*(.+)$")   # "Last, First Middle" → (last, rest)
 
@@ -84,53 +87,65 @@ class CollinAdapter(Adapter):
         start = ctx.now_ms()
         try:
             async with ctx.browser.new_page() as page:
-                # 1. Navigate and wait for Blazor hydration
+                # 1. Navigate and wait for Blazor SignalR hydration.
+                #    We wait for the search input to appear (not just window.Blazor) because the
+                #    MudBlazor components render only after the SignalR circuit is established.
                 await page.goto(_URL, wait_until="domcontentloaded", timeout=ctx.timeout_s * 1000)
-                await page.wait_for_function("() => !!window.Blazor", timeout=20_000)
-                await page.wait_for_selector(_SEL_SEARCH, timeout=15_000)
+                await page.wait_for_selector(_SEL_SEARCH, timeout=30_000)
 
-                # 2. Try to bump rows-per-page to 100 (reduces pagination round-trips).
-                #    If the selector misses (markup changed) we silently skip — default 10 still works.
-                try:
-                    await self._set_rows_per_page(page, 100)
-                except Exception:
-                    pass
-
-                # 3. Type the search term. We search "LAST, FIRST" when both are supplied so the
-                #    live filter is tighter; otherwise just the last name (broad, filter client-side).
+                # 2. Build the search term. "LAST, FIRST" tightens the live filter when both
+                #    are given; otherwise just last name (we filter client-side anyway).
                 term = query.last.strip().upper()
                 if query.first:
                     term = f"{term}, {query.first.strip().upper()}"
-                await page.fill(_SEL_SEARCH, term)
 
-                # 4. Wait for the Inmate tab rows to settle after the SignalR round-trip.
-                #    wait_for_selector gives up to 10 s for the first row; then we pause 1.2 s for
-                #    the count to stabilise (Blazor re-renders incrementally).
+                # 3. Type character-by-character so Blazor's oninput/onchange fires on each
+                #    keystroke — page.fill() bypasses these events and the search never runs.
+                await page.click(_SEL_SEARCH)
+                await page.keyboard.type(term, delay=80)
+
+                # 4. Wait for the SignalR round-trip: the Inmate tab label changes from the
+                #    unfiltered count to the filtered count. Give it up to 10 s, then 1.2 s
+                #    to let Blazor finish re-rendering the table rows.
                 try:
                     await page.wait_for_selector(_SEL_TABLE_ROWS, timeout=_WAIT_FIRST_ROW_MS)
                     await page.wait_for_timeout(_SETTLE_MS)
                 except Exception:
-                    # No rows appeared → genuine no-results (or the Inmate tab is empty for this name)
                     return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-                # 5. Make sure we're on the Inmate tab (it's selected by default; re-click to be safe)
+                # 5. Read the Inmate tab label to get the server-reported total count.
+                #    "Inmate (54)" → 54. Used for partial signalling; not the row count.
+                inmate_total: int | None = None
                 try:
-                    inmate_tab = await page.query_selector(_SEL_TAB_INMATE)
-                    if inmate_tab:
-                        await inmate_tab.click()
-                        await page.wait_for_timeout(600)
+                    tab_el = await page.query_selector(_SEL_TAB_INMATE)
+                    if tab_el:
+                        tab_text = await tab_el.text_content() or ""
+                        m = _TAB_COUNT_RE.search(tab_text)
+                        if m:
+                            inmate_total = int(m.group(1).replace(",", ""))
                 except Exception:
                     pass
 
-                # 6. Grab the rendered DOM and parse it offline (pure function → fixture-testable)
+                # 6. Try to bump rows-per-page so we get more records per page.
+                #    Failures are silently ignored — default 10 still works.
+                if inmate_total and inmate_total > 10:
+                    try:
+                        await self._set_rows_per_page(page, 100)
+                        await page.wait_for_timeout(800)
+                    except Exception:
+                        pass
+
+                # 7. Snapshot the DOM and parse offline (pure fn → fixture-testable).
                 html = await page.content()
 
             records = self._parse_inmate_rows(html, query)
             if not records:
                 return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-            partial = len(records) >= query.max_results
-            return self._envelope(AdapterStatus.OK, records[: query.max_results], len(records), start, partial=partial)
+            # partial if the server reported more than we scraped (pagination limit)
+            total = inmate_total if inmate_total is not None else len(records)
+            partial = total > len(records) or len(records) >= query.max_results
+            return self._envelope(AdapterStatus.OK, records[: query.max_results], total, start, partial=partial)
 
         except Exception as e:
             return self._fail(AdapterStatus.ERROR, start, str(e))
