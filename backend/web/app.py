@@ -70,7 +70,9 @@ def get_audit(request: Request) -> AuditLog:
 
 
 def get_browser(request: Request):
-    return request.app.state.browser
+    # None when the lifespan didn't start a browser (Playwright missing) or in tests that
+    # bypass the lifespan (ASGITransport). Browser-tier adapters treat None as "unavailable".
+    return getattr(request.app.state, "browser", None)
 
 
 def get_adapters() -> list[Adapter]:
@@ -124,6 +126,7 @@ async def record_detail(
     source: str,
     record_id: str,
     adapters: list[Adapter] = Depends(get_adapters),
+    browser: BrowserManager | None = Depends(get_browser),
 ) -> InmateRecord:
     """Fetch one record's full detail on demand (e.g. Tarrant CID -> mugshot + charges).
 
@@ -140,7 +143,11 @@ async def record_detail(
     async with httpx.AsyncClient(
         headers={"User-Agent": _USER_AGENT}, follow_redirects=True, timeout=httpx.Timeout(budget)
     ) as client:
-        record = await adapter.fetch_detail(record_id, AdapterContext(client, timeout_s=budget))
+        # Browser-tier details (Collin's mugshot needs a Playwright click-through) get the
+        # shared BrowserManager; HTTP-tier adapters ignore it.
+        record = await adapter.fetch_detail(
+            record_id, AdapterContext(client, timeout_s=budget, browser=browser)
+        )
     if record is None:
         raise HTTPException(status_code=404, detail="no detail available for this record")
     return record
