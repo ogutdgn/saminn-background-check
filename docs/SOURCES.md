@@ -35,7 +35,7 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
 | **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | reCAPTCHA v3 (invisible, non-blocking) | — | 🟢 proven (1000 results) | **done** |
 | **Denton County, TX** | Tyler Public Access, *self-hosted* (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
-| **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes with stealth, today) | ✅ mugshots | 🟢 proven | todo |
+| **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes with stealth, today) | ✅ mugshots | 🟢 proven | **done** |
 | **Fannin County, TX** | Vendor jail site (`offenderindex.com/fannincoga`) | 3–4 | http or browser | **client-side** CAPTCHA (defeatable within rules) | TBD | 🟡 reachable, unproven | todo |
 
 ### Notes per source

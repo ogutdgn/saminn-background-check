@@ -19,6 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 from adapters import registry
 from adapters.base import Adapter, AdapterContext, AdapterResult, InmateRecord, SearchQuery
 from core.audit import AuditLog
+from core.browser import BrowserManager
 from core.orchestrator import _USER_AGENT, run_search
 
 _DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "audit.sqlite"
@@ -33,10 +34,19 @@ def _db_path() -> Path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.audit = AuditLog(_db_path())
+    # Start the shared browser only if at least one enabled adapter needs it.
+    needs_browser = any(a.transport == "browser" for a in registry.enabled_adapters())
+    if needs_browser:
+        app.state.browser = BrowserManager()
+        await app.state.browser.start()
+    else:
+        app.state.browser = None
     try:
         yield
     finally:
         app.state.audit.close()
+        if app.state.browser:
+            await app.state.browser.stop()
 
 
 app = FastAPI(
@@ -57,6 +67,10 @@ app.add_middleware(
 
 def get_audit(request: Request) -> AuditLog:
     return request.app.state.audit
+
+
+def get_browser(request: Request):
+    return request.app.state.browser
 
 
 def get_adapters() -> list[Adapter]:
@@ -89,6 +103,7 @@ async def search(
     query: SearchQuery,
     audit: AuditLog = Depends(get_audit),
     adapters: list[Adapter] = Depends(get_adapters),
+    browser: BrowserManager | None = Depends(get_browser),
     staff: str | None = None,
 ) -> EventSourceResponse:
     """Fan `query` out to the enabled sources; stream one SSE `result` event per source,
@@ -96,7 +111,7 @@ async def search(
     — it never breaks the stream for the others."""
 
     async def event_stream():
-        async for result in run_search(query, adapters=adapters, audit=audit, staff=staff):
+        async for result in run_search(query, adapters=adapters, audit=audit, staff=staff, browser=browser):
             yield {"event": "result", "data": result.model_dump_json()}
         yield {"event": "done", "data": "{}"}
 
