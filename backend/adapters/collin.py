@@ -57,7 +57,7 @@ _PHOTO_URL = f"{_HOST}/JudicialOnlineSearch2/api/Inmate/{{so}}/Photo"
 # MudBlazor markup changes. The app is Blazor Server, so selectors target rendered HTML.
 _SEL_SEARCH = "input[placeholder='Search']"
 _SEL_ROWS_PER_PAGE = "div.mud-select input"          # the rows-per-page MudSelect inside MudTablePager
-_SEL_TAB_INMATE = "div.mud-tab:first-child"  # "Inmate (N)" tab button (first of three)
+_SEL_TAB_INMATE = ".mud-tab"  # first .mud-tab on page = "Inmate (N)" tab button
 _SEL_TABLE_ROWS = "table:first-of-type tbody tr"  # Inmate table is always first on page
 
 # After typing, SignalR debounce + round-trip is typically < 1 s on LAN.
@@ -87,34 +87,49 @@ class CollinAdapter(Adapter):
         start = ctx.now_ms()
         try:
             async with ctx.browser.new_page() as page:
-                # 1. Navigate and wait for Blazor SignalR hydration.
-                #    We wait for the search input to appear (not just window.Blazor) because the
-                #    MudBlazor components render only after the SignalR circuit is established.
+                # 1. Navigate and wait for Blazor/SignalR hydration.
                 await page.goto(_URL, wait_until="domcontentloaded", timeout=ctx.timeout_s * 1000)
                 await page.wait_for_selector(_SEL_SEARCH, timeout=30_000)
 
-                # 2. Build the search term. "LAST, FIRST" tightens the live filter when both
-                #    are given; otherwise just last name (we filter client-side anyway).
+                # 2. Capture the unfiltered Inmate tab text BEFORE typing so we can detect
+                #    when the SignalR response arrives ("Inmate (1,373)" → "Inmate (54)").
+                initial_tab_text = ""
+                try:
+                    tab_el = await page.query_selector(_SEL_TAB_INMATE)
+                    if tab_el:
+                        initial_tab_text = (await tab_el.text_content() or "").strip()
+                except Exception:
+                    pass
+
+                # 3. Type the search term character-by-character.
+                #    page.fill() bypasses Blazor's oninput events; keyboard.type() fires them.
                 term = query.last.strip().upper()
                 if query.first:
                     term = f"{term}, {query.first.strip().upper()}"
-
-                # 3. Type character-by-character so Blazor's oninput/onchange fires on each
-                #    keystroke — page.fill() bypasses these events and the search never runs.
                 await page.click(_SEL_SEARCH)
                 await page.keyboard.type(term, delay=80)
 
-                # 4. Wait for the SignalR round-trip: the Inmate tab label changes from the
-                #    unfiltered count to the filtered count. Give it up to 10 s, then 1.2 s
-                #    to let Blazor finish re-rendering the table rows.
-                try:
-                    await page.wait_for_selector(_SEL_TABLE_ROWS, timeout=_WAIT_FIRST_ROW_MS)
-                    await page.wait_for_timeout(_SETTLE_MS)
-                except Exception:
-                    return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
+                # 4. Wait for the SignalR round-trip to complete.
+                #    Primary: wait for the Inmate tab label to change from the pre-filter value.
+                #    Fallback: a 3 s timed wait (enough for SignalR on any reasonable connection).
+                filter_applied = False
+                if initial_tab_text:
+                    try:
+                        await page.wait_for_function(
+                            """(prev) => {
+                                const tab = document.querySelector('.mud-tab');
+                                return tab && tab.textContent.trim() !== prev;
+                            }""",
+                            initial_tab_text,
+                            timeout=_WAIT_FIRST_ROW_MS,
+                        )
+                        filter_applied = True
+                    except Exception:
+                        pass
+                if not filter_applied:
+                    await page.wait_for_timeout(3000)  # fallback: plain wait
 
-                # 5. Read the Inmate tab label to get the server-reported total count.
-                #    "Inmate (54)" → 54. Used for partial signalling; not the row count.
+                # 5. Read the filtered Inmate count from the tab label ("Inmate (54)" → 54).
                 inmate_total: int | None = None
                 try:
                     tab_el = await page.query_selector(_SEL_TAB_INMATE)
@@ -126,26 +141,49 @@ class CollinAdapter(Adapter):
                 except Exception:
                     pass
 
-                # 6. Try to bump rows-per-page so we get more records per page.
-                #    Failures are silently ignored — default 10 still works.
-                if inmate_total and inmate_total > 10:
-                    try:
-                        await self._set_rows_per_page(page, 100)
-                        await page.wait_for_timeout(800)
-                    except Exception:
-                        pass
+                # If the tab shows 0, return no-results immediately.
+                if inmate_total == 0:
+                    return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-                # 7. Snapshot the DOM and parse offline (pure fn → fixture-testable).
-                html = await page.content()
+                # 6. Paginate through ALL pages, collecting rows until we hit max_results
+                #    or run out of pages. MudBlazor paginates 10 rows per page by default;
+                #    we click the next-page button until it's disabled.
+                all_records: list[InmateRecord] = []
+                while len(all_records) < query.max_results:
+                    html = await page.content()
+                    page_records = self._parse_inmate_rows(html, query)
+                    # Avoid duplicates when Blazor re-renders same rows on re-navigate
+                    seen = {r.raw.get("so_number") for r in all_records if r.raw.get("so_number")}
+                    for r in page_records:
+                        so = r.raw.get("so_number")
+                        if so and so in seen:
+                            continue
+                        all_records.append(r)
+                        if so:
+                            seen.add(so)
 
-            records = self._parse_inmate_rows(html, query)
-            if not records:
+                    # Check if there is a next-page button that isn't disabled.
+                    # Use locator().first so we target only the Inmate table's pager
+                    # (Case and Warrants also have pagers). scroll_into_view_if_needed
+                    # is required because the pager sits below the fold.
+                    next_locator = page.locator("button[aria-label='Next page']").first
+                    if await next_locator.count() == 0:
+                        break
+                    if await next_locator.is_disabled():
+                        break
+                    await next_locator.scroll_into_view_if_needed()
+                    await next_locator.click()
+                    # Wait for Blazor to re-render the next page of rows
+                    await page.wait_for_timeout(1200)
+
+            if not all_records:
                 return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-            # partial if the server reported more than we scraped (pagination limit)
-            total = inmate_total if inmate_total is not None else len(records)
-            partial = total > len(records) or len(records) >= query.max_results
-            return self._envelope(AdapterStatus.OK, records[: query.max_results], total, start, partial=partial)
+            total = inmate_total if inmate_total is not None else len(all_records)
+            partial = len(all_records) >= query.max_results and total > len(all_records)
+            return self._envelope(
+                AdapterStatus.OK, all_records[: query.max_results], total, start, partial=partial
+            )
 
         except Exception as e:
             return self._fail(AdapterStatus.ERROR, start, str(e))
