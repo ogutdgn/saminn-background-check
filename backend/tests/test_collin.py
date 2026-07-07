@@ -73,7 +73,9 @@ def test_parse_single_result():
     assert r.sex == "M"
     assert r.booking_date == "6/15/2026"
     assert r.raw["so_number"] == "352000"
-    assert r.raw["detail_id"] == "352000"
+    # detail_id packs the surname + SO number — fetch_detail must re-search by surname to reach
+    # the mugshot (the detail page's GUID is only revealed by clicking the row).
+    assert r.raw["detail_id"] == "SMITH|352000"
     assert r.source == "collin"
 
 
@@ -119,13 +121,47 @@ def test_matched_on_name():
 
 
 def test_matched_on_alias_when_name_differs():
-    """Row matched via alias field — last name does NOT start with the query last name."""
+    """Row matched via the Search Fields alias — last name does NOT start with the query
+    surname, but the person uses the query as an AKA. Per the data-pull policy these
+    ALIAS matches are KEPT (a background check must surface them) and tagged ALIAS."""
     rows = _make_row("Williams, John", "1985", "Male", "6/1/2026", "444444",
                      "Alias: Smith, John")
-    # "Williams" does not start with "Smith" → filtered out (alias-only rows are dropped
-    # by the client-side filter unless we relax it). This test confirms the filter is strict.
+    records = adapter._parse_inmate_rows(_make_page(rows), SearchQuery(last="Smith"))
+    assert len(records) == 1
+    assert records[0].name == "Williams, John"
+    assert records[0].matched_on[0].type == MatchType.ALIAS
+    assert "Smith, John" in (records[0].matched_on[0].detail or "")
+
+
+def test_attorney_match_dropped():
+    """Rows that matched only because the query is the ATTORNEY's name (not the
+    defendant's) are noise — dropped, per the chosen policy (name + alias only)."""
+    rows = (
+        _make_row("Smith, John", "1985", "Male", "6/1/2026", "111111") +          # name → kept
+        _make_row("Bright, Corey", "1990", "Male", "3/1/2026", "888888",
+                  "Attorney: Smith, John H")                                        # attorney → dropped
+    )
+    records = adapter._parse_inmate_rows(_make_page(rows), SearchQuery(last="Smith"))
+    assert len(records) == 1
+    assert records[0].name == "Smith, John"
+
+
+def test_other_search_field_dropped():
+    """A non-name row whose Search Fields is neither Alias nor Attorney is dropped
+    (we can't vouch it's the person; only name + alias are surfaced)."""
+    rows = _make_row("Jones, Pat", "1990", "Male", "3/1/2026", "777777", "Party: Smith")
     records = adapter._parse_inmate_rows(_make_page(rows), SearchQuery(last="Smith"))
     assert records == []
+
+
+def test_alias_variants_on_name_match_stay_name():
+    """A real surname row that also carries alias variants of the SAME person is a NAME
+    match, not an alias match — the aliases are just spelling variants."""
+    rows = _make_row("Smith, Michael Lynn", "1966", "Male", "6/1/2026", "111111",
+                     "Alias:Smith, MichaelSmith, Micheal")
+    records = adapter._parse_inmate_rows(_make_page(rows), SearchQuery(last="Smith"))
+    assert len(records) == 1
+    assert records[0].matched_on[0].type == MatchType.NAME
 
 
 def test_sex_normalisation():

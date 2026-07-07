@@ -12,29 +12,37 @@ Search Fields (alias highlights). The SO Number drives mugshot fetching via fetc
 
 Flow:
   1. Navigate to /global — wait for Blazor hydration (window.Blazor defined + search input visible)
-  2. (Optional) bump rows-per-page to 100 so pagination is rarely needed
-  3. Type the search term into the single search box
-  4. Wait for the SignalR round-trip to settle (tab count text stabilises)
-  5. Scrape the Inmate tab table rows from the live DOM
-  6. Client-side surname filter (the global search also matches case titles / attorneys)
+  2. Type the search term into the single search box
+  3. Wait for the SignalR round-trip to settle (tab count text stabilises)
+  4. Walk EVERY page of the Inmate tab (not just page 1), scraping rows from the live DOM
+  5. Classify each row by its "Search Fields" column and keep name + alias matches
 
 Incapsula bot-protection: playwright-stealth patches navigator.webdriver + a dozen other
 fingerprint fields so the challenge never fires. The BrowserManager handles this for all
 browser adapters.
 
-Mugshots: GET /JudicialOnlineSearch2/api/Inmate/{soNumber}/Photo → JPEG. Confirmed pattern
-from the SO Number column — fetch_detail hydrates photo_base64 on demand.
+Mugshots: the booking photo lives on the per-inmate detail page (…/inmate/<guid>) as a
+data:image the Blazor app injects on load. The detail GUID is only revealed by CLICKING the
+row (it is not in the row HTML, and the SO number is not directly navigable), so fetch_detail
+re-runs the surname search, clicks the SO's row, and reads the photo on demand.
 
-Accuracy: matched_on=NAME for rows where the query surname appears in the inmate name;
-matched_on=ALIAS for rows matched via the Search Fields alias. Attorney noise cannot appear
-in the Inmate tab (attorneys are not booked). One InmateRecord per roster row.
+Data-pull policy (why a row is kept — mirrors the reference scraper):
+  The single search box does a GLOBAL match — the Inmate tab returns a row when the query
+  hits the person's name, one of their **aliases**, OR the **attorney** on their case.
+  The "Search Fields" column tells us which ("Alias: …" / "Attorney: …").
+    • NAME   — the person's actual surname matches the query        → keep.
+    • ALIAS  — the person uses the query as an AKA (different legal  → keep (a background
+               surname, e.g. "Villareal" aka "Smith, Michael")         check must surface it).
+    • ATTORNEY / OTHER — the query only matched a lawyer or an       → drop (noise). This is
+               unclassifiable field, not the person                     the bulk of a common
+                                                                        surname like "Smith".
+  Every kept row carries matched_on=[NAME|ALIAS] so the UI can distinguish real-name hits
+  from AKA hits. One InmateRecord per roster row.
 """
 from __future__ import annotations
 
-import base64
 import re
 
-import httpx
 from selectolax.parser import HTMLParser
 
 from .base import (
@@ -51,24 +59,54 @@ from .base import (
 
 _HOST = "https://apps2.collincountytx.gov"
 _URL = f"{_HOST}/JudicialOnlineSearch2/global"
-_PHOTO_URL = f"{_HOST}/JudicialOnlineSearch2/api/Inmate/{{so}}/Photo"
 
 # Playwright selectors — all CSS, kept as constants so they're easy to update if the
 # MudBlazor markup changes. The app is Blazor Server, so selectors target rendered HTML.
 _SEL_SEARCH = "input[placeholder='Search']"
-_SEL_ROWS_PER_PAGE = "div.mud-select input"          # the rows-per-page MudSelect inside MudTablePager
 _SEL_TAB_INMATE = ".mud-tab"  # first .mud-tab on page = "Inmate (N)" tab button
-_SEL_TABLE_ROWS = "table:first-of-type tbody tr"  # Inmate table is always first on page
 
-# After typing, SignalR debounce + round-trip is typically < 1 s on LAN.
-# We wait up to 10 s for the first row to appear, then allow 1 s for the count to settle.
-_WAIT_FIRST_ROW_MS = 10_000
-_SETTLE_MS = 1_200
+# --- Pagination selectors ---------------------------------------------------
+# Pagination is the historically fragile part (see script-codes SCRAPER_NOTES §Collin).
+# Three traps, all handled below:
+#   1. The Inmate / Case / Warrants tabs each render their OWN table + pager into the DOM
+#      at once (hidden tabs are display:none, not removed). Target the Inmate table by its
+#      header columns, NEVER by "first table on page" or nth-index.
+#   2. MudTable nests <table> → div.mud-table-container → div.mud-table (outer wrapper).
+#      The Next-page button lives in the OUTER mud-table wrapper. A substring match on
+#      contains(@class,'mud-table') stops at mud-table-container (no pager), so pagination
+#      silently dies after page 1. Match the exact ' mud-table ' class token.
+#   3. The pager aria-label varies by MudBlazor version: "Next page" (older) or
+#      "Go to next page" (newer). Accept both.
+_XP_INMATE_TABLE = (
+    "xpath=//table[.//th[normalize-space()='Name'] "
+    "and .//th[normalize-space()='Year of Birth'] "
+    "and .//th[normalize-space()='Booking Date']]"
+)
+_XP_MUD_WRAPPER = (  # from a table, walk up to its outer ' mud-table ' wrapper (trap #2)
+    "xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' mud-table ')][1]"
+)
+_SEL_NEXT_BTN = "button[aria-label='Next page'], button[aria-label='Go to next page']"  # trap #3
+_SEL_PAGE_CAPTION = ".mud-table-page-number-information"  # "1-10 of 54"
+
+# --- Detail (mugshot) selectors ---------------------------------------------
+# An inmate row, located by its SO Number cell — used by fetch_detail to click through to
+# the detail page (whose GUID URL is only revealed by the click, never present in the row).
+_XP_ROW_BY_SO = (
+    "xpath=//table[.//th[normalize-space()='Booking Date']]"
+    "//tbody//tr[.//td[@data-label='SO Number' and normalize-space()='{so}']]"
+)
+_URL_INMATE_DETAIL_GLOB = "**/inmate/**"  # detail URL after a row click: …/JudicialOnlineSearch2/inmate/<guid>
+
+# Safety bound: a broad surname whose hits are one attorney's whole caseload can span many
+# pages of noise. Stop after this many pages and report `partial` rather than hang.
+_MAX_PAGES = 40
 
 # Regex to pull the Inmate count from the tab label "Inmate (54)" → 54
 _TAB_COUNT_RE = re.compile(r"Inmate\s*\((\d[\d,]*)\)")
 
 _NAME_RE = re.compile(r"^([^,]+),\s*(.+)$")   # "Last, First Middle" → (last, rest)
+# "Search Fields" cell → leading label before the colon: "Alias: …" / "Attorney: …".
+_SEARCH_FIELD_RE = re.compile(r"^\s*([A-Za-z][A-Za-z ]*?)\s*:\s*(.*)$", re.S)
 
 
 class CollinAdapter(Adapter):
@@ -77,6 +115,7 @@ class CollinAdapter(Adapter):
     transport = "browser"
     tier = 4
     has_photos = True
+    portal_url = _URL   # public Judicial Online Search landing/search page (contract: every live source declares one)
     timeout_s = 90.0   # Blazor init (~5 s cold) + SignalR round-trip + DOM settle
 
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
@@ -91,124 +130,249 @@ class CollinAdapter(Adapter):
                 await page.goto(_URL, wait_until="domcontentloaded", timeout=ctx.timeout_s * 1000)
                 await page.wait_for_selector(_SEL_SEARCH, timeout=30_000)
 
-                # 2. Capture the unfiltered Inmate tab text BEFORE typing so we can detect
-                #    when the SignalR response arrives ("Inmate (1,373)" → "Inmate (54)").
-                initial_tab_text = ""
-                try:
-                    tab_el = await page.query_selector(_SEL_TAB_INMATE)
-                    if tab_el:
-                        initial_tab_text = (await tab_el.text_content() or "").strip()
-                except Exception:
-                    pass
+                # 2. Capture the pre-filter Inmate count as a baseline. The tab label passes
+                #    through transient values on load ("Inmate (0)" → "Inmate (1,373)"), so
+                #    this is only a reference point for detecting "the filter has applied".
+                initial_count = await self._read_inmate_count(page)
 
-                # 3. Type the search term character-by-character.
-                #    page.fill() bypasses Blazor's oninput events; keyboard.type() fires them.
+                # 3. Type the search term. MudTextField's debounced binding listens for real
+                #    keypress events — page.fill() sets the value but fires only one input
+                #    event the binding ignores, so the filter never runs. Clear then
+                #    press_sequentially (character-by-character) to drive the binding.
                 term = query.last.strip().upper()
                 if query.first:
                     term = f"{term}, {query.first.strip().upper()}"
-                await page.click(_SEL_SEARCH)
-                await page.keyboard.type(term, delay=80)
+                inp = page.locator(_SEL_SEARCH).first
+                await inp.click()
+                await inp.fill("")
+                await inp.press_sequentially(term, delay=80)
+                await inp.press("Tab")
 
-                # 4. Wait for the SignalR round-trip to complete.
-                #    Primary: wait for the Inmate tab label to change from the pre-filter value.
-                #    Fallback: a 3 s timed wait (enough for SignalR on any reasonable connection).
-                filter_applied = False
-                if initial_tab_text:
-                    try:
-                        await page.wait_for_function(
-                            """(prev) => {
-                                const tab = document.querySelector('.mud-tab');
-                                return tab && tab.textContent.trim() !== prev;
-                            }""",
-                            initial_tab_text,
-                            timeout=_WAIT_FIRST_ROW_MS,
-                        )
-                        filter_applied = True
-                    except Exception:
-                        pass
-                if not filter_applied:
-                    await page.wait_for_timeout(3000)  # fallback: plain wait
+                # 4. Wait for the Inmate count to SETTLE on the filtered value. After typing
+                #    "SMITH, JOHN" the tab passes through "Inmate (0)" and the unfiltered
+                #    "Inmate (1,373)" before landing on "Inmate (25)". We must wait for a value
+                #    that (a) differs from the pre-filter baseline and (b) holds steady — a
+                #    naive "first change" read catches a transient and wrongly returns 0.
+                inmate_total = await self._wait_for_settled_count(page, initial_count)
 
-                # 5. Read the filtered Inmate count from the tab label ("Inmate (54)" → 54).
-                inmate_total: int | None = None
-                try:
-                    tab_el = await page.query_selector(_SEL_TAB_INMATE)
-                    if tab_el:
-                        tab_text = await tab_el.text_content() or ""
-                        m = _TAB_COUNT_RE.search(tab_text)
-                        if m:
-                            inmate_total = int(m.group(1).replace(",", ""))
-                except Exception:
-                    pass
-
-                # If the tab shows 0, return no-results immediately.
-                if inmate_total == 0:
+                # No settled non-zero count → the search genuinely has no matches.
+                if not inmate_total:
                     return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-                # 6. Paginate through ALL pages, collecting rows until we hit max_results
-                #    or run out of pages. MudBlazor paginates 10 rows per page by default;
-                #    we click the next-page button until it's disabled.
+                # 6. Walk EVERY page of the Inmate tab (MudBlazor paginates 10 rows/page),
+                #    classifying each row and keeping only name + alias matches. Attorney /
+                #    other noise is dropped by the parser, so it never counts toward
+                #    max_results — we keep paging until we have enough real matches, the pager
+                #    is drained, or we hit the page-count safety bound.
                 all_records: list[InmateRecord] = []
-                while len(all_records) < query.max_results:
+                seen: set = set()
+                pages_walked = 0
+                pager_exhausted = False
+                while pages_walked < _MAX_PAGES:
+                    pages_walked += 1
                     html = await page.content()
-                    page_records = self._parse_inmate_rows(html, query)
-                    # Avoid duplicates when Blazor re-renders same rows on re-navigate
-                    seen = {r.raw.get("so_number") for r in all_records if r.raw.get("so_number")}
-                    for r in page_records:
+                    for r in self._parse_inmate_rows(html, query):
                         so = r.raw.get("so_number")
-                        if so and so in seen:
+                        key = so or (r.name, r.year_of_birth)   # dedup across re-renders
+                        if key in seen:
                             continue
+                        seen.add(key)
                         all_records.append(r)
-                        if so:
-                            seen.add(so)
-
-                    # Check if there is a next-page button that isn't disabled.
-                    # Use locator().first so we target only the Inmate table's pager
-                    # (Case and Warrants also have pagers). scroll_into_view_if_needed
-                    # is required because the pager sits below the fold.
-                    next_locator = page.locator("button[aria-label='Next page']").first
-                    if await next_locator.count() == 0:
+                    if len(all_records) >= query.max_results:
                         break
-                    if await next_locator.is_disabled():
+                    if not await self._go_next_page(page):
+                        pager_exhausted = True
                         break
-                    await next_locator.scroll_into_view_if_needed()
-                    await next_locator.click()
-                    # Wait for Blazor to re-render the next page of rows
-                    await page.wait_for_timeout(1200)
 
             if not all_records:
                 return self._envelope(AdapterStatus.NO_RESULTS, [], 0, start)
 
-            total = inmate_total if inmate_total is not None else len(all_records)
-            partial = len(all_records) >= query.max_results and total > len(all_records)
-            return self._envelope(
-                AdapterStatus.OK, all_records[: query.max_results], total, start, partial=partial
-            )
+            # `total` = count of real (name + alias) matches we actually found. We only know
+            # it is exhaustive when we drained the pager; if we stopped on max_results or the
+            # page bound, more may exist → report `partial` with the count we have as a floor.
+            records = all_records[: query.max_results]
+            total = len(all_records)
+            partial = (not pager_exhausted) or total > len(records)
+            return self._envelope(AdapterStatus.OK, records, total, start, partial=partial)
 
         except Exception as e:
             return self._fail(AdapterStatus.ERROR, start, str(e))
 
-    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
-        """Fetch the mugshot for one inmate by SO Number.
+    async def _go_next_page(self, page) -> bool:
+        """Advance the Inmate table's pager by one page.
 
-        record_id = SO Number (e.g. "352435"). Returns an InmateRecord with photo_base64
-        set, or None if the fetch fails or no photo exists.
+        Returns False when there is no enabled Next button (last page reached, or no pager
+        because the result set fits one page). Targets the Inmate table specifically — the
+        Case and Warrants tabs render their own pagers into the same DOM — and waits for the
+        page caption ("11-20 of 54") to change so the next page.content() reflects the new
+        rows rather than the ones we just scraped.
         """
+        inmate_tbl = page.locator(_XP_INMATE_TABLE).first
+        if await inmate_tbl.count() == 0:
+            return False
+        wrapper = inmate_tbl.locator(_XP_MUD_WRAPPER).first
+        next_btn = wrapper.locator(_SEL_NEXT_BTN).first
+        if await next_btn.count() == 0 or await next_btn.is_disabled():
+            return False
+
+        caption = wrapper.locator(_SEL_PAGE_CAPTION).first
+        before = ((await caption.text_content()) or "").strip() if await caption.count() else ""
+        await next_btn.scroll_into_view_if_needed()
+        await next_btn.click()
+        # Poll for the caption to change (bounded ~5 s), then return so the loop re-scrapes.
+        for _ in range(25):
+            await page.wait_for_timeout(200)
+            now = ((await caption.text_content()) or "").strip() if await caption.count() else ""
+            if now and now != before:
+                break
+        return True
+
+    @staticmethod
+    async def _read_inmate_count(page) -> int | None:
+        """Current Inmate tab count ("Inmate (25)" → 25), or None if not shown yet."""
         try:
-            url = _PHOTO_URL.format(so=record_id)
-            resp = await ctx.http.get(url, timeout=ctx.timeout_s)
-            if resp.status_code != 200 or not resp.content:
+            el = await page.query_selector(_SEL_TAB_INMATE)
+            if el is None:
                 return None
-            photo = base64.b64encode(resp.content).decode()
-            return InmateRecord(
-                source=self.id,
-                source_url=_URL,
-                name="",
-                photo_base64=photo,
-                matched_on=[MatchInfo(type=MatchType.NAME)],
-            )
+            m = _TAB_COUNT_RE.search(await el.text_content() or "")
+            return int(m.group(1).replace(",", "")) if m else None
         except Exception:
             return None
+
+    async def _wait_for_settled_count(
+        self, page, initial: int | None, *,
+        poll_ms: int = 120, stable_ms: int = 600, deadline_ms: int = 15_000,
+    ) -> int | None:
+        """Poll the Inmate count until it settles on the FILTERED value.
+
+        After typing, the count churns (0 → unfiltered roster → filtered result) as SignalR
+        updates arrive. We accept a value only once it (a) differs from the pre-filter
+        `initial` baseline and (b) has held steady for `stable_ms` — this skips the transient
+        load states that a naive first-change read would mistake for the answer. Returns the
+        settled count, or the pre-filter `initial` unchanged if nothing new ever settled
+        (i.e. a genuine no-result, where the count stays at its baseline).
+        """
+        needed = max(1, -(-stable_ms // poll_ms))   # ceil(stable_ms / poll_ms)
+        steps = max(1, deadline_ms // poll_ms)
+        settled_val: int | None = None
+        run = 0
+        for _ in range(steps):
+            cur = await self._read_inmate_count(page)
+            if cur is not None and cur != initial:
+                if cur == settled_val:
+                    run += 1
+                    if run >= needed:
+                        return cur
+                else:
+                    settled_val, run = cur, 1
+                    if needed == 1:
+                        return cur
+            await page.wait_for_timeout(poll_ms)
+        # Deadline hit: trust the CURRENT on-screen count — by now the DOM has long settled,
+        # so this is the real answer (0 for a genuine no-result), not a stale transient.
+        cur = await self._read_inmate_count(page)
+        if cur is not None:
+            return cur
+        return settled_val if settled_val is not None else initial
+
+    async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
+        """Fetch one inmate's mugshot + detail deep-link, on demand.
+
+        `record_id` is the packed "SURNAME|SO" from the list record's detail_id. The Collin
+        detail page is keyed by an opaque GUID that only exists once you CLICK the row (it is
+        never in the row HTML and the SO number is not directly navigable), so we re-run the
+        surname search in the browser, paginate to the row with this SO Number, click it, and
+        read the booking photo the detail page injects as a data:image. Returns an
+        InmateRecord with photo_base64 (raw base64, no data: prefix) and source_url set to the
+        per-inmate deep link, or None if unavailable (no browser, row gone, no photo).
+        """
+        if ctx.browser is None:
+            return None
+        surname, _, so = record_id.partition("|")
+        surname, so = surname.strip().upper(), so.strip()
+        if not surname or not so:
+            return None
+        try:
+            async with ctx.browser.new_page() as page:
+                await page.goto(_URL, wait_until="domcontentloaded", timeout=ctx.timeout_s * 1000)
+                await page.wait_for_selector(_SEL_SEARCH, timeout=30_000)
+
+                initial = await self._read_inmate_count(page)
+                inp = page.locator(_SEL_SEARCH).first
+                await inp.click()
+                await inp.fill("")
+                await inp.press_sequentially(surname, delay=80)
+                await inp.press("Tab")
+                if not await self._wait_for_settled_count(page, initial):
+                    return None
+
+                # Paginate to the row carrying this SO Number, then click through to detail.
+                row_sel = _XP_ROW_BY_SO.format(so=so)
+                clicked = False
+                for _ in range(_MAX_PAGES):
+                    row = page.locator(row_sel).first
+                    if await row.count() > 0:
+                        await row.scroll_into_view_if_needed()
+                        await row.click()
+                        clicked = True
+                        break
+                    if not await self._go_next_page(page):
+                        break
+                if not clicked:
+                    return None
+
+                await page.wait_for_url(_URL_INMATE_DETAIL_GLOB, timeout=15_000)
+                detail_url = page.url
+                photo = await self._extract_booking_photo(page)
+                if photo is None:
+                    # No mugshot (old/released record) — still return the deep link so the UI
+                    # can offer a navigable source, matching the always-a-link contract.
+                    return InmateRecord(
+                        source=self.id, source_url=detail_url, name="",
+                        matched_on=[MatchInfo(type=MatchType.NAME)],
+                    )
+                return InmateRecord(
+                    source=self.id, source_url=detail_url, name="",
+                    photo_base64=photo, matched_on=[MatchInfo(type=MatchType.NAME)],
+                )
+        except Exception:
+            return None
+
+    @staticmethod
+    async def _extract_booking_photo(page) -> str | None:
+        """Read the detail page's booking mugshot as raw base64 (data: prefix stripped).
+
+        Blazor injects the photo a beat AFTER the metadata renders, so we wait for any
+        data:image to appear (bounded), preferring the one labelled "Booking Photo".
+        """
+        try:
+            await page.wait_for_function(
+                """() => {
+                    for (const i of document.querySelectorAll('img')) {
+                        if ((i.getAttribute('src') || '').startsWith('data:image')) return true;
+                    }
+                    return false;
+                }""",
+                timeout=10_000,
+            )
+        except Exception:
+            pass  # no photo appeared in budget — may genuinely have none
+        src = await page.evaluate(
+            """() => {
+                const named = document.querySelector('img[alt="Booking Photo"]');
+                if (named && (named.getAttribute('src') || '').startsWith('data:image')) {
+                    return named.getAttribute('src');
+                }
+                for (const i of document.querySelectorAll('img')) {
+                    const s = i.getAttribute('src') || '';
+                    if (s.startsWith('data:image')) return s;
+                }
+                return null;
+            }"""
+        )
+        if not src:
+            return None
+        return src.split(",", 1)[1] if "," in src else src  # frontend re-adds the data: prefix
 
     # ------------------------------------------------------------------
     # Pure HTML parser — no browser dependency; tested against fixtures
@@ -217,16 +381,17 @@ class CollinAdapter(Adapter):
     def _parse_inmate_rows(self, html: str, query: SearchQuery) -> list[InmateRecord]:
         """Parse the rendered Inmate tab table from a page.content() snapshot.
 
-        Returns one InmateRecord per row, filtered to rows where the query surname
-        appears in the inmate's last name (global search also hits case titles and
-        attorneys — we keep only real name matches and known-alias matches).
+        One InmateRecord per KEPT row. A row is kept when it is a NAME match (the person's
+        surname matches the query) or an ALIAS match (the Search Fields column says the
+        query is one of their aliases). Attorney/other rows — the bulk of a common-surname
+        global search — are dropped as noise. See the module docstring's data-pull policy.
         """
         tree = HTMLParser(html)
-        # Find the first visible table (the Inmate tab is active by default)
         table = self._inmate_table(tree)
         if table is None:
             return []
 
+        surname = query.last.strip().upper()
         out: list[InmateRecord] = []
         for row in table.css("tbody tr"):
             cells = [td.text(strip=True) for td in row.css("td")]
@@ -239,16 +404,17 @@ class CollinAdapter(Adapter):
             if not last:
                 continue
 
-            # Filter: keep only rows whose last name starts with the query surname
-            # (catches "SMITH" → "SMITH, JOHN"; rejects "BLACKSMITH, ..." via prefix check)
-            if not last.upper().startswith(query.last.strip().upper()):
-                continue
-
-            # matched_on: NAME if the query surname is in the actual last name;
-            # ALIAS if it only appeared in the Search Fields aliases column.
-            matched_on = [MatchInfo(type=MatchType.NAME, detail="Inmate roster")]
-            if search_fields and query.last.upper() not in last.upper():
-                matched_on = [MatchInfo(type=MatchType.ALIAS, detail=search_fields)]
+            # NAME match: the person's real surname starts with the query surname
+            # (catches "SMITH" → "SMITH, JOHN"; a prefix match, not a loose substring).
+            if last.upper().startswith(surname):
+                matched_on = [MatchInfo(type=MatchType.NAME)]
+            else:
+                # Not a name match — keep it ONLY if the Search Fields column classifies it
+                # as an alias (the person uses the query as an AKA). Attorney/other → drop.
+                cls = self._classify_search_fields(search_fields)
+                if cls is None or cls[0] is not MatchType.ALIAS:
+                    continue
+                matched_on = [MatchInfo(type=cls[0], detail=cls[1])]
 
             name_display = f"{last}, {first}".strip(", ") if first else last
 
@@ -264,7 +430,11 @@ class CollinAdapter(Adapter):
                     charges=[],   # Inmate roster has no charge detail on the list
                     raw={
                         "so_number": so_number or None,
-                        "detail_id": so_number or None,   # drives fetch_detail (mugshot)
+                        # detail_id drives fetch_detail (the on-demand mugshot). The detail
+                        # page is keyed by an opaque GUID only revealed by clicking the row —
+                        # unreachable from an SO number alone — so fetch_detail must re-run the
+                        # surname search and click the SO's row. We pack both it needs here.
+                        "detail_id": f"{surname}|{so_number}" if so_number else None,
                         "search_fields": search_fields or None,
                     },
                 )
@@ -276,13 +446,39 @@ class CollinAdapter(Adapter):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _classify_search_fields(search_fields: str) -> tuple[MatchType, str] | None:
+        """Classify the 'Search Fields' cell → (MatchType, detail), or None if empty.
+
+        The cell is prefixed with the field that matched: "Alias: SMITH, JOHN…",
+        "Attorney: Smith, John H". We read the label before the colon. Anything we don't
+        recognise is OTHER (still returned, but the caller drops non-alias matches).
+        """
+        sf = (search_fields or "").strip()
+        if not sf:
+            return None
+        m = _SEARCH_FIELD_RE.match(sf)
+        if not m:
+            return (MatchType.OTHER, sf)
+        label, rest = m.group(1).strip().lower(), m.group(2).strip()
+        if label == "alias":
+            return (MatchType.ALIAS, f"Alias: {rest}")
+        if label == "attorney":
+            return (MatchType.ATTORNEY, f"Attorney: {rest}")
+        return (MatchType.OTHER, sf)
+
+    @staticmethod
     def _inmate_table(tree: HTMLParser):
-        """Return the first table inside a tab panel (Inmate tab is active by default)."""
-        for panel in tree.css("div[role='tabpanel']"):
-            t = panel.css_first("table")
-            if t is not None:
+        """Return the Inmate table, identified by its unique header columns.
+
+        The Inmate / Case / Warrants tabs each render a table into the DOM at once, so we
+        can't pick by position — the Inmate one is whichever <thead> carries Name +
+        Year of Birth + Booking Date. Falls back to the first table on the page (covers the
+        single-table fixtures and any markup where the headers aren't found).
+        """
+        for t in tree.css("table"):
+            headers = {th.text(strip=True) for th in t.css("thead th")}
+            if {"Name", "Year of Birth", "Booking Date"} <= headers:
                 return t
-        # Fallback: any table on the page
         return tree.css_first("table")
 
     @staticmethod
@@ -301,28 +497,6 @@ class CollinAdapter(Adapter):
         if v in ("F", "FEMALE"):
             return "F"
         return None if not v else v
-
-    @staticmethod
-    async def _set_rows_per_page(page, n: int) -> None:
-        """Try to set the MudTablePager rows-per-page to n (100). Best-effort."""
-        from playwright.async_api import Page as _Page  # local import keeps top-level clean
-        # MudSelect for rows-per-page — click it, then pick the option closest to n
-        pager_sel = "div.mud-table-pagination"
-        await page.wait_for_selector(pager_sel, timeout=5_000)
-        # Click the select input inside the pager
-        await page.click(f"{pager_sel} .mud-input-slot")
-        await page.wait_for_timeout(400)
-        # Pick the option with value closest to n (or the last/largest option)
-        options = await page.query_selector_all("div[role='option']")
-        if not options:
-            return
-        best = options[-1]   # largest option (furthest down the list)
-        for opt in options:
-            txt = (await opt.text_content() or "").strip()
-            if txt.isdigit() and int(txt) <= n:
-                best = opt
-        await best.click()
-        await page.wait_for_timeout(600)
 
     def _envelope(self, status, records, total, start_ms, *, partial=False):
         return AdapterResult(
