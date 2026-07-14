@@ -16,6 +16,7 @@ from .base import Adapter
 from .collin import CollinAdapter
 from .dallas import DallasAdapter
 from .denton import DentonAdapter
+from .denton_dc import DentonDCAdapter
 from .hunt import HuntAdapter
 from .odcr import OdcrAdapter
 from .tarrant import TarrantAdapter
@@ -36,6 +37,7 @@ REGISTRY: list[RegistryEntry] = [
     RegistryEntry(HuntAdapter(), enabled=True),      # Stage 4 — live (current-custody roster; client-side surname filter)
     RegistryEntry(DentonAdapter(), enabled=True),    # Stage 4 — live (Tier-3 Tyler Public Access; stateful VIEWSTATE)
     RegistryEntry(CollinAdapter(), enabled=True),    # Stage 4 — live (Tier-4 Blazor/SignalR; Playwright browser)
+    RegistryEntry(DentonDCAdapter(), enabled=True),  # Stage 4 — live (Tier-3 Tyler PublicAccessDC; District Court felonies)
 ]
 
 
