@@ -255,15 +255,25 @@ class DentonDCAdapter(Adapter):
 
     @asynccontextmanager
     async def _isolated_client(self, ctx: AdapterContext):
-        """Fresh AsyncClient with its own cookie jar — prevents ASP.NET_SessionId
-        from colliding with DentonAdapter's session on the same domain.
-        Reuses ctx.http's transport so MockTransport still works in tests."""
+        """Fresh AsyncClient with its own cookie jar and transport.
+
+        In tests we share the MockTransport so test fixtures still intercept requests.
+        In production we create a completely independent client — sharing the real
+        transport would cause its aclose() to shut down ctx.http's connection pool,
+        breaking every other adapter that runs after us on the same context.
+        """
         transport = getattr(ctx.http, "_transport", None)
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        async with httpx.AsyncClient(
-            transport=transport, headers=headers, follow_redirects=True, timeout=ctx.timeout_s
-        ) as client:
-            yield client
+        if isinstance(transport, httpx.MockTransport):
+            async with httpx.AsyncClient(
+                transport=transport, headers=headers, follow_redirects=True, timeout=ctx.timeout_s
+            ) as client:
+                yield client
+        else:
+            async with httpx.AsyncClient(
+                headers=headers, follow_redirects=True, timeout=ctx.timeout_s
+            ) as client:
+                yield client
 
     def _envelope(self, status, records, total, start_ms, *, partial=False):
         return AdapterResult(
