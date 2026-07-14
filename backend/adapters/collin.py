@@ -394,7 +394,10 @@ class CollinAdapter(Adapter):
         surname = query.last.strip().upper()
         out: list[InmateRecord] = []
         for row in table.css("tbody tr"):
-            cells = [td.text(strip=True) for td in row.css("td")]
+            # Use separator=" " so <b>Blake</b>Kevin doesn't collapse to "BlakeKevin" —
+            # the Collin site bolds the matched term in each cell, leaving no space in the
+            # raw text nodes when the highlighted word is adjacent to the next word.
+            cells = [" ".join(td.text(separator=" ", strip=True).split()) for td in row.css("td")]
             if len(cells) < 5:
                 continue
             raw_name, yob, sex, booking_date, so_number = cells[0], cells[1], cells[2], cells[3], cells[4]
@@ -404,9 +407,13 @@ class CollinAdapter(Adapter):
             if not last:
                 continue
 
-            # NAME match: the person's real surname starts with the query surname
-            # (catches "SMITH" → "SMITH, JOHN"; a prefix match, not a loose substring).
-            if last.upper().startswith(surname):
+            # NAME match: the person's real surname starts with the query surname (prefix
+            # match covers "SMITH" → "SMITH, JOHN" and "BLAK" → "BLAKE"), OR the query
+            # appears as a word in their first/middle name (e.g. "Holland, Joshua Blake"
+            # when searching "BLAKE" — Collin's global search matches full-name tokens,
+            # not just the surname, so we must too).
+            full_name_tokens = set((last + " " + (first or "")).upper().split())
+            if last.upper().startswith(surname) or surname in full_name_tokens:
                 matched_on = [MatchInfo(type=MatchType.NAME)]
             else:
                 # Not a name match — keep it ONLY if the Search Fields column classifies it

@@ -96,15 +96,24 @@ def test_parse_multiple_results():
 
 
 def test_surname_filter_drops_non_matches():
-    """Global search can return noise (attorney names, case-title hits). Filter them out."""
+    """Attorney/case noise is dropped; first/middle name matches ARE kept.
+
+    Collin's global search matches all name tokens, not just the surname.
+    "Johnson, Smith" (Smith as first name) is a valid match when searching
+    "Smith" — the site returns it, so we keep it as a NAME match.
+    Attorney rows (Search Fields = "Attorney: …") are still dropped.
+    """
     rows = (
         _make_row("Smith, John", "1985", "Male", "6/1/2026", "111111") +
-        _make_row("Johnson, Smith", "1970", "Male", "3/1/2026", "999999")  # first name match
+        _make_row("Johnson, Smith", "1970", "Male", "3/1/2026", "999999") +  # first-name match → keep
+        _make_row("Davis, James", "1980", "Male", "1/1/2026", "888888", "Attorney: Smith, Robert H")
     )
     q = SearchQuery(last="Smith")
     records = adapter._parse_inmate_rows(_make_page(rows), q)
-    assert len(records) == 1
-    assert records[0].name == "Smith, John"
+    assert len(records) == 2
+    names = [r.name for r in records]
+    assert "Smith, John" in names
+    assert "Johnson, Smith" in names
 
 
 def test_no_results_empty_table():
