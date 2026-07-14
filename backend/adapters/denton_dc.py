@@ -25,6 +25,7 @@ No mugshots. DOB normalized to year only.
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -67,15 +68,26 @@ class DentonDCAdapter(Adapter):
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
         start = ctx.now_ms()
         try:
-            await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
-            nf = await ctx.http.post(
+            # Use an isolated client so our ASP.NET_SessionId cookie doesn't collide with
+            # DentonAdapter's session on the same domain (justice1.dentoncounty.gov).
+            async with self._isolated_client(ctx) as http:
+                return await self._do_search(http, query, ctx, start)
+        except httpx.TimeoutException as e:
+            return self._fail(AdapterStatus.TIMEOUT, start, str(e))
+        except Exception as e:
+            return self._fail(AdapterStatus.ERROR, start, str(e))
+
+    async def _do_search(self, http, query, ctx, start) -> AdapterResult:
+        try:
+            await http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
+            nf = await http.post(
                 _SEARCH,
                 data={"NodeID": _ALL_DC, "NodeDesc": _ALL_DC_DESC},
                 headers={"Referer": f"{_HOST}/default.aspx"},
                 timeout=ctx.timeout_s,
             )
             nf.raise_for_status()
-            resp = await ctx.http.post(
+            resp = await http.post(
                 _SEARCH, data=self._search_form(nf.text, query),
                 headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
             )
@@ -92,20 +104,21 @@ class DentonDCAdapter(Adapter):
                 raise ValueError("results page had no parseable rows and no 0-records marker")
             partial = len(records) >= self.RESULT_CAP
             return self._envelope(AdapterStatus.OK, records, total, start, partial=partial)
-        except httpx.TimeoutException as e:
-            return self._fail(AdapterStatus.TIMEOUT, start, str(e))
-        except Exception as e:
-            return self._fail(AdapterStatus.ERROR, start, str(e))
+        except httpx.TimeoutException:
+            raise
+        except Exception:
+            raise
 
     async def fetch_detail(self, record_id: str, ctx: AdapterContext) -> InmateRecord | None:
         try:
             if not record_id.isdigit():
                 return None
-            await ctx.http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
-            resp = await ctx.http.get(
-                f"{_HOST}/CaseDetail.aspx", params={"CaseID": record_id},
-                headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
-            )
+            async with self._isolated_client(ctx) as http:
+                await http.get(f"{_HOST}/default.aspx", timeout=ctx.timeout_s)
+                resp = await http.get(
+                    f"{_HOST}/CaseDetail.aspx", params={"CaseID": record_id},
+                    headers={"Referer": _SEARCH}, timeout=ctx.timeout_s,
+                )
             resp.raise_for_status()
             d = self._parse_detail(resp.text)
             if not d["sheet"]:
@@ -239,6 +252,18 @@ class DentonDCAdapter(Adapter):
     def _record_count(html: str) -> int | None:
         m = _COUNT_RE.search(html)
         return int(m.group(1).replace(",", "")) if m else None
+
+    @asynccontextmanager
+    async def _isolated_client(self, ctx: AdapterContext):
+        """Fresh AsyncClient with its own cookie jar — prevents ASP.NET_SessionId
+        from colliding with DentonAdapter's session on the same domain.
+        Reuses ctx.http's transport so MockTransport still works in tests."""
+        transport = getattr(ctx.http, "_transport", None)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with httpx.AsyncClient(
+            transport=transport, headers=headers, follow_redirects=True, timeout=ctx.timeout_s
+        ) as client:
+            yield client
 
     def _envelope(self, status, records, total, start_ms, *, partial=False):
         return AdapterResult(
