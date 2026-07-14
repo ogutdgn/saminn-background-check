@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Clock,
   ExternalLink,
+  FileText,
   ImageOff,
   Loader2,
   Scale,
   SearchX,
-  TriangleAlert,
+  Shield,
   X,
 } from "lucide-react"
 import type { AdapterResult, Charge, InmateRecord } from "@/api/types"
@@ -25,14 +27,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-/** What the UI knows about an enabled source (from /api/health). */
 export interface SourceMeta {
   id: string
   display_name: string
   transport: string
   has_photos: boolean
-  /** The source's public landing/search page — a stable URL to open when a record has no
-   *  per-record deep link (session/POST-gated court & jail sites). May be absent on older payloads. */
   portal_url?: string | null
 }
 
@@ -40,44 +39,87 @@ type Tone = "ok" | "muted" | "warn" | "danger"
 const STATUS: Record<string, { label: string; tone: Tone; Icon: typeof CheckCircle2 }> = {
   ok: { label: "Match found", tone: "ok", Icon: CheckCircle2 },
   no_results: { label: "No matches", tone: "muted", Icon: SearchX },
-  error: { label: "Source error", tone: "danger", Icon: TriangleAlert },
+  error: { label: "Source error", tone: "danger", Icon: AlertTriangle },
   timeout: { label: "Timed out", tone: "warn", Icon: Clock },
 }
 const TONE_TEXT: Record<Tone, string> = {
   ok: "text-emerald-600",
-  muted: "text-zinc-500",
-  warn: "text-amber-600",
-  danger: "text-red-600",
+  muted: "text-slate-400",
+  warn: "text-amber-500",
+  danger: "text-red-500",
 }
 
-// Display-only flavor (the architecture allows per-source display copy).
 const SOURCE_KIND: Record<string, string> = {
   tarrant: "Sheriff jail roster · TX",
   dallas: "Criminal court records · TX",
   hunt: "Sheriff jail roster · TX",
   odcr: "Statewide court records · OK",
   denton: "Criminal court records · TX",
+  denton_dc: "District Court felonies · TX",
+  collin: "Criminal court records · TX",
 }
 const SOURCE_SHORT: Record<string, string> = {
   tarrant: "Tarrant · TX",
   dallas: "Dallas · TX",
   hunt: "Hunt · TX",
   odcr: "ODCR · OK",
-  denton: "Denton · TX",
+  denton: "Denton JP · TX",
+  denton_dc: "Denton DC · TX",
+  collin: "Collin · TX",
 }
-// A stable per-source tint for the row chip (text/border only — distinct from status tones).
+
+// jail = booking/custody sources; court = court record sources
+const SOURCE_TYPE: Record<string, "jail" | "court"> = {
+  tarrant: "jail",
+  hunt: "jail",
+  dallas: "court",
+  denton: "court",
+  denton_dc: "court",
+  odcr: "court",
+  collin: "court",
+}
+
+// Per-source tint for the source chip
 const SOURCE_TINT: Record<string, string> = {
-  tarrant: "border-blue-200 bg-blue-50 text-blue-700",
+  tarrant: "border-amber-200 bg-amber-50 text-amber-800",
   dallas: "border-violet-200 bg-violet-50 text-violet-700",
-  hunt: "border-teal-200 bg-teal-50 text-teal-700",
-  odcr: "border-orange-200 bg-orange-50 text-orange-700",
+  hunt: "border-orange-200 bg-orange-50 text-orange-800",
+  odcr: "border-sky-200 bg-sky-50 text-sky-700",
   denton: "border-rose-200 bg-rose-50 text-rose-700",
+  denton_dc: "border-pink-200 bg-pink-50 text-pink-700",
+  collin: "border-emerald-200 bg-emerald-50 text-emerald-700",
 }
+
+// Left border color for rows: amber for jail, indigo for court
+const ROW_BORDER: Record<string, string> = {
+  tarrant: "border-l-amber-400",
+  hunt: "border-l-amber-400",
+  dallas: "border-l-indigo-400",
+  denton: "border-l-indigo-400",
+  denton_dc: "border-l-indigo-500",
+  odcr: "border-l-sky-400",
+  collin: "border-l-indigo-400",
+}
+
 function tint(id: string) {
   return SOURCE_TINT[id] ?? "border-zinc-200 bg-zinc-50 text-zinc-600"
 }
+function rowBorder(id: string) {
+  return ROW_BORDER[id] ?? "border-l-slate-300"
+}
 function shortName(s: SourceMeta) {
   return SOURCE_SHORT[s.id] ?? s.display_name
+}
+function sourceType(id: string): "jail" | "court" {
+  return SOURCE_TYPE[id] ?? "court"
+}
+
+// Extract charge severity from offense/disposition text
+function chargeSeverity(charge: Charge): "felony" | "misdemeanor" | null {
+  const text = `${charge.offense ?? ""} ${charge.disposition ?? ""}`.toLowerCase()
+  if (text.includes("felony")) return "felony"
+  if (text.includes("misdemeanor")) return "misdemeanor"
+  return null
 }
 
 const INITIAL_VISIBLE = 25
@@ -121,10 +163,9 @@ export function Results({
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [detailError, setDetailError] = useState(false)
   const [visible, setVisible] = useState(INITIAL_VISIBLE)
-  const detailReq = useRef(0) // monotonic id so a stale detail fetch can't clobber the open dialog
+  const detailReq = useRef(0)
 
-  // filters / sort
-  const [off, setOff] = useState<Set<string>>(new Set()) // disabled source ids
+  const [off, setOff] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<Sort>("relevance")
   const [sex, setSex] = useState<"all" | "M" | "F">("all")
   const [photoOnly, setPhotoOnly] = useState(false)
@@ -157,10 +198,8 @@ export function Results({
     return sortRows(rows, sort, order)
   }, [merged, off, sex, photoOnly, minYear, sort, order])
 
-  // reset paging when the view shrinks/changes shape
   useEffect(() => setVisible(INITIAL_VISIBLE), [off, sex, photoOnly, minYear, sort])
 
-  // auto-load mugshots for the first N visible photo-capable rows (re-runs when that set changes)
   const photoTargets = useMemo(
     () =>
       view
@@ -183,9 +222,7 @@ export function Results({
       }
     }
     void Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker))
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photoSig])
 
@@ -197,8 +234,6 @@ export function Results({
     if (ck && !details[ck]) await loadDetail(row.source.id, did!, ck)
   }
   async function loadDetail(source: string, did: string, ck: string) {
-    // Guard the shared dialog flags against an out-of-order resolve: if a newer open/retry started
-    // while this fetch was in flight, drop this result so it can't clobber the current dialog.
     const reqId = ++detailReq.current
     setLoadingDetail(true)
     setDetailError(false)
@@ -229,20 +264,18 @@ export function Results({
     })
   }
 
-  // per-source notices (partial / error / timeout) — surfaced once, not per row
   const notices = sources
     .map((s) => ({ s, r: results[s.id] }))
     .filter(({ r }) => r && (r.partial || r.status === "error" || r.status === "timeout"))
 
-  // The stream is done when searching ends — even if it errored mid-way and some sources never
-  // reported (don't require every source to have a result, or the empty state would never show).
   const allDone = !searching && sources.length > 0
   const noneMatched = allDone && merged.length === 0
 
   return (
     <>
-      {/* sticky control bar */}
-      <div className="bg-background/95 sticky top-0 z-20 -mx-4 mt-4 border-b px-4 py-2.5 backdrop-blur">
+      {/* Sticky control bar */}
+      <div className="sticky top-0 z-20 -mx-4 mt-4 border-b bg-card/95 px-4 py-2.5 shadow-sm backdrop-blur">
+        {/* Source chips */}
         <div className="flex flex-wrap items-center gap-1.5">
           {sources.map((s) => (
             <SourceChip
@@ -256,13 +289,14 @@ export function Results({
           ))}
         </div>
 
-        <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+        {/* Filter / sort bar */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground">
           <label className="flex items-center gap-1.5">
-            <span>Sort</span>
+            <span className="uppercase tracking-wide text-[10px] font-semibold">Sort</span>
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as Sort)}
-              className="border-input bg-background h-7 rounded-md border px-1.5 text-xs"
+              className="h-7 rounded border border-input bg-background px-1.5 text-xs"
             >
               <option value="relevance">Best match</option>
               <option value="name">Name A–Z</option>
@@ -277,13 +311,13 @@ export function Results({
             onChange={(v) => setSex(v as "all" | "M" | "F")}
             options={[
               ["all", "Any sex"],
-              ["M", "M"],
-              ["F", "F"],
+              ["M", "Male"],
+              ["F", "Female"],
             ]}
           />
 
-          <label className="border-input flex items-center gap-1 rounded-md border px-1.5 py-1">
-            <span>Born ≥</span>
+          <label className="flex items-center gap-1 rounded border border-input px-1.5 py-1">
+            <span className="text-[10px] uppercase tracking-wide font-semibold">Born ≥</span>
             <input
               type="number"
               inputMode="numeric"
@@ -299,23 +333,23 @@ export function Results({
               type="button"
               onClick={() => setPhotoOnly((v) => !v)}
               className={cn(
-                "border-input h-7 rounded-md border px-2",
-                photoOnly && "border-foreground/30 bg-muted text-foreground",
+                "h-7 rounded border border-input px-2 text-xs",
+                photoOnly && "border-primary/40 bg-primary/10 text-primary font-medium",
               )}
             >
               With photo
             </button>
           )}
 
-          <span className="ml-auto">
-            Showing <span className="text-foreground font-medium">{view.length.toLocaleString()}</span>{" "}
-            of {merged.length.toLocaleString()}
+          <span className="ml-auto text-xs">
+            <span className="font-semibold text-foreground">{view.length.toLocaleString()}</span>
+            {" "}of {merged.length.toLocaleString()} shown
           </span>
           {filtersActive && (
             <button
               type="button"
               onClick={clearFilters}
-              className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-1 hover:text-foreground hover:underline underline-offset-2"
             >
               <X className="size-3" /> Clear filters
             </button>
@@ -323,7 +357,7 @@ export function Results({
         </div>
       </div>
 
-      {/* per-source notices */}
+      {/* Per-source notices */}
       {notices.length > 0 && (
         <div className="mt-3 space-y-1.5">
           {notices.map(({ s, r }) => (
@@ -332,24 +366,28 @@ export function Results({
         </div>
       )}
 
-      {/* the unified list */}
+      {/* Result list */}
       <div className="mt-3 space-y-2">
         {searching && merged.length === 0 && (
           <>
-            <Skeleton className="h-[68px] w-full rounded-lg" />
-            <Skeleton className="h-[68px] w-full rounded-lg" />
-            <Skeleton className="h-[68px] w-full rounded-lg" />
+            <Skeleton className="h-[76px] w-full rounded-lg" />
+            <Skeleton className="h-[76px] w-full rounded-lg" />
+            <Skeleton className="h-[76px] w-full rounded-lg" />
           </>
         )}
 
         {noneMatched && (
-          <p className="text-muted-foreground py-10 text-center text-sm">
-            No matching records across {sources.length} sources.
-          </p>
+          <div className="py-12 text-center">
+            <SearchX className="mx-auto mb-2 size-8 text-muted-foreground/40" />
+            <p className="text-sm font-medium">No records found</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              No matching records across {sources.length} sources.
+            </p>
+          </div>
         )}
 
         {view.length === 0 && merged.length > 0 && (
-          <p className="text-muted-foreground py-8 text-center text-sm">
+          <p className="py-8 text-center text-sm text-muted-foreground">
             No records match the current filters.{" "}
             <button onClick={clearFilters} className="text-foreground underline underline-offset-2">
               Clear filters
@@ -362,7 +400,7 @@ export function Results({
           const photo = did ? details[`${row.source.id}:${did}`]?.photo_base64 : undefined
           const fetched = !!(did && details[`${row.source.id}:${did}`])
           return (
-            <UnifiedRow
+            <RecordRow
               key={row.key}
               row={row}
               photo={photo}
@@ -380,8 +418,8 @@ export function Results({
             onClick={() => setVisible((v) => v + VISIBLE_STEP)}
           >
             Show {Math.min(VISIBLE_STEP, view.length - visible).toLocaleString()} more
-            <span className="text-muted-foreground ml-1">
-              ({(view.length - visible).toLocaleString()} hidden)
+            <span className="ml-1 text-muted-foreground">
+              ({(view.length - visible).toLocaleString()} remaining)
             </span>
           </Button>
         )}
@@ -398,6 +436,7 @@ export function Results({
               onRetry={() => openDid && openCk && loadDetail(openRec.source.id, openDid, openCk)}
               hasPhotos={openRec.source.has_photos}
               sourceTitle={openRec.source.display_name}
+              sourceId={openRec.source.id}
               portalUrl={openRec.source.portal_url}
             />
           )}
@@ -434,25 +473,35 @@ function SourceChip({
         : "—"
     : ""
 
+  const isJail = sourceType(source.id) === "jail"
+
   return (
     <button
       type="button"
       onClick={onToggle}
-      title={`${SOURCE_KIND[source.id] ?? ""} — click to ${off ? "include" : "hide"}`}
+      title={`${SOURCE_KIND[source.id] ?? ""} — click to ${off ? "show" : "hide"}`}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
-        off ? "bg-muted/40 text-muted-foreground opacity-60" : "bg-background",
+        "inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs transition-colors",
+        off ? "bg-muted/30 text-muted-foreground opacity-50" : "bg-card",
+        !off && isJail ? "border-amber-200" : !off ? "border-indigo-200" : "",
       )}
     >
       {!result && searching ? (
-        <Loader2 className="text-muted-foreground size-3 animate-spin" />
+        <Loader2 className="size-3 animate-spin text-muted-foreground" />
       ) : status ? (
         <status.Icon className={cn("size-3", off ? "text-muted-foreground" : TONE_TEXT[status.tone])} />
       ) : (
-        <span className="bg-muted-foreground/40 size-1.5 rounded-full" />
+        <span className="size-1.5 rounded-full bg-muted-foreground/30" />
       )}
       <span className={cn("font-medium", off && "line-through")}>{source.display_name}</span>
-      {countText && <span className="text-muted-foreground tabular-nums">{countText}</span>}
+      {countText && (
+        <span className={cn(
+          "rounded px-1 py-0.5 text-[10px] font-semibold tabular-nums",
+          result?.status === "ok" && !off ? "bg-primary/10 text-primary" : "text-muted-foreground"
+        )}>
+          {countText}
+        </span>
+      )}
     </button>
   )
 }
@@ -467,16 +516,16 @@ function Segmented({
   options: [string, string][]
 }) {
   return (
-    <div className="border-input inline-flex overflow-hidden rounded-md border">
+    <div className="inline-flex overflow-hidden rounded border border-input">
       {options.map(([v, label], i) => (
         <button
           key={v}
           type="button"
           onClick={() => onChange(v)}
           className={cn(
-            "h-7 px-2",
-            i > 0 && "border-input border-l",
-            value === v ? "bg-muted text-foreground font-medium" : "hover:bg-muted/50",
+            "h-7 px-2 text-xs",
+            i > 0 && "border-l border-input",
+            value === v ? "bg-muted font-medium text-foreground" : "hover:bg-muted/50",
           )}
         >
           {label}
@@ -498,18 +547,20 @@ function Notice({
   return (
     <div
       className={cn(
-        "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
-        isProblem ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800",
+        "flex items-start gap-2 rounded border px-2.5 py-1.5 text-xs",
+        isProblem
+          ? "border-red-200 bg-red-50 text-red-700"
+          : "border-amber-200 bg-amber-50 text-amber-800",
       )}
     >
-      <TriangleAlert className="mt-px size-3.5 shrink-0" />
+      <AlertTriangle className="mt-px size-3.5 shrink-0" />
       <span>
-        <span className="font-medium">{source.display_name}:</span>{" "}
+        <span className="font-semibold">{source.display_name}:</span>{" "}
         {result.status === "timeout"
-          ? "the source was too slow to respond — other sources are unaffected. Try again."
+          ? "source timed out — other sources unaffected."
           : result.status === "error"
-            ? (result.error ?? "this source returned an error.")
-            : `showing the first ${(result.records?.length ?? 0).toLocaleString()} — add a first name to narrow (more exist).`}
+            ? (result.error || "source returned an error.")
+            : `showing first ${(result.records?.length ?? 0).toLocaleString()} results — add a first name to narrow.`}
       </span>
     </div>
   )
@@ -517,7 +568,7 @@ function Notice({
 
 // ---------------------------------------------------------------------------
 
-function UnifiedRow({
+function RecordRow({
   row,
   photo,
   fetched,
@@ -535,57 +586,91 @@ function UnifiedRow({
   const meta = [rec.year_of_birth ? `b. ${rec.year_of_birth}` : null, sexLabel(rec.sex)]
     .filter(Boolean)
     .join(" · ")
-  const matchedNote = isOther && matched?.detail ? `matched on ${matched.type}: ${matched.detail}` : null
   const c0 = (rec.charges ?? [])[0]
   const moreCharges = (rec.charges?.length ?? 0) - 1
+  const severity = c0 ? chargeSeverity(c0) : null
+  const isJail = sourceType(source.id) === "jail"
 
   const inner = (
-    <div className="flex items-center gap-3">
+    <div className="flex items-stretch gap-3">
+      {/* Left accent border via a div rather than border-l to avoid layout shift */}
+      <div className={cn("w-1 shrink-0 rounded-full", isJail ? "bg-amber-400" : "bg-indigo-400")} />
+
       <RowThumb source={source} photo={photo} fetched={fetched} />
-      <div className="min-w-0 flex-1">
+
+      <div className="min-w-0 flex-1 py-0.5">
+        {/* Name + match type */}
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-semibold">{rec.name}</span>
+          <span className="text-sm font-bold leading-tight tracking-tight truncate">{rec.name}</span>
           {isOther && (
-            <Badge variant="outline" className="text-muted-foreground shrink-0 text-[10px] uppercase">
+            <Badge variant="outline" className="shrink-0 text-[9px] uppercase text-muted-foreground">
               {matched!.type}
             </Badge>
           )}
         </div>
-        {(meta || matchedNote) && (
-          <div className="text-muted-foreground truncate text-xs">
-            {[meta, matchedNote].filter(Boolean).join(" · ")}
+
+        {/* DOB / sex */}
+        {meta && (
+          <div className="mt-0.5 text-[11px] text-muted-foreground">{meta}</div>
+        )}
+
+        {/* Primary charge */}
+        {c0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {severity === "felony" && (
+              <span className="inline-flex items-center rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
+                Felony
+              </span>
+            )}
+            {severity === "misdemeanor" && (
+              <span className="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                Misd.
+              </span>
+            )}
+            <span className="text-xs font-semibold text-foreground/90 truncate">
+              {c0.offense ?? "—"}
+            </span>
+            {moreCharges > 0 && (
+              <span className="text-[11px] text-muted-foreground">+{moreCharges} more</span>
+            )}
           </div>
         )}
-        {c0 && (
-          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 truncate text-xs">
-            <span className="text-foreground/90">{c0.offense ?? "—"}</span>
+
+        {/* Disposition + case # */}
+        {c0 && (c0.disposition || c0.case_no) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-2">
             {c0.disposition && (
-              <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-                {c0.disposition}
-              </Badge>
+              <span className="text-[11px] text-muted-foreground truncate">{c0.disposition}</span>
             )}
-            {c0.case_no && <span className="text-muted-foreground">#{c0.case_no}</span>}
-            {moreCharges > 0 && <span className="text-muted-foreground">+{moreCharges} more</span>}
+            {c0.case_no && (
+              <span className="text-[11px] text-muted-foreground/70 font-mono">#{c0.case_no}</span>
+            )}
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Badge variant="outline" className={cn("border text-[10px]", tint(source.id))}>
+
+      {/* Source badge + chevron */}
+      <div className="flex shrink-0 flex-col items-end justify-between gap-1 py-0.5">
+        <Badge variant="outline" className={cn("text-[10px] font-medium border", tint(source.id))}>
           {shortName(source)}
         </Badge>
         {hasDetail && (
-          <ChevronRight className="text-muted-foreground/60 size-4 transition-transform group-hover/row:translate-x-0.5" />
+          <ChevronRight className="size-4 text-muted-foreground/40 transition-transform group-hover/row:translate-x-0.5" />
         )}
       </div>
     </div>
   )
 
-  if (!hasDetail) return <div className="rounded-lg border p-3">{inner}</div>
+  const base = "rounded-lg border bg-card p-3 shadow-sm"
+  if (!hasDetail) return <div className={base}>{inner}</div>
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group/row hover:border-foreground/20 hover:bg-muted/40 focus-visible:ring-ring/50 block w-full rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
+      className={cn(
+        base,
+        "group/row block w-full text-left transition-colors hover:border-primary/30 hover:bg-primary/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+      )}
     >
       {inner}
     </button>
@@ -601,11 +686,17 @@ function RowThumb({
   photo?: string | null
   fetched: boolean
 }) {
+  const isJail = sourceType(source.id) === "jail"
   if (source.has_photos) return <PhotoSlot photo={photo} fetched={fetched} size="sm" />
   return (
-    <div className="bg-muted/50 text-muted-foreground flex h-16 w-12 shrink-0 flex-col items-center justify-center gap-1 rounded-md border">
-      <Scale className="size-4 opacity-60" />
-      <span className="text-[8px] leading-none">Court</span>
+    <div className={cn(
+      "flex h-16 w-12 shrink-0 flex-col items-center justify-center gap-1 rounded border",
+      isJail ? "bg-amber-50 border-amber-100 text-amber-400" : "bg-indigo-50 border-indigo-100 text-indigo-400"
+    )}>
+      {isJail ? <Shield className="size-4" /> : <Scale className="size-4" />}
+      <span className="text-[8px] leading-none font-semibold uppercase tracking-wide opacity-70">
+        {isJail ? "Jail" : "Court"}
+      </span>
     </div>
   )
 }
@@ -627,14 +718,12 @@ function PhotoSlot({
       <img
         src={photoSrc(photo)}
         alt="Booking photo"
-        className={`${box} shrink-0 rounded-md border object-cover`}
+        className={cn(box, "shrink-0 rounded border object-cover")}
       />
     )
   }
   return (
-    <div
-      className={`bg-muted text-muted-foreground flex ${box} shrink-0 flex-col items-center justify-center gap-1 rounded-md border`}
-    >
+    <div className={cn(box, "flex shrink-0 flex-col items-center justify-center gap-1 rounded border bg-muted text-muted-foreground")}>
       {loading ? (
         <Loader2 className="size-5 animate-spin" />
       ) : fetched ? (
@@ -643,7 +732,7 @@ function PhotoSlot({
           <span className="text-[9px] leading-none">No image</span>
         </>
       ) : (
-        <ImageOff className="size-4 opacity-40" />
+        <ImageOff className="size-4 opacity-30" />
       )}
     </div>
   )
@@ -659,6 +748,7 @@ function RecordDetail({
   onRetry,
   hasPhotos,
   sourceTitle,
+  sourceId,
   portalUrl,
 }: {
   rec: InmateRecord
@@ -668,6 +758,7 @@ function RecordDetail({
   onRetry: () => void
   hasPhotos: boolean
   sourceTitle: string
+  sourceId: string
   portalUrl?: string | null
 }) {
   const name = detail?.name || rec.name
@@ -678,53 +769,89 @@ function RecordDetail({
   const sheet = rawText(detail, "detail_text")
   const meta = [yob ? `b. ${yob}` : null, sexLabel(sex)].filter(Boolean).join(" · ")
   const showPortrait = hasPhotos || !!photo || (!loading && !!detail)
-  // A navigable link to the origin for EVERY record: prefer a per-record deep link (source_url), and
-  // when the source can't provide one (session/POST-gated court & jail sites), fall back to its public
-  // portal + the case number to look up — never a dead/bouncing link.
   const deepLink = detail?.source_url || rec.source_url
   const caseRef =
     charges.map((c) => c.case_no).find(Boolean) ||
     rawText(detail, "case_no") ||
     rawText(rec, "case_no")
+  const isJail = sourceType(sourceId) === "jail"
 
   return (
     <>
-      <DialogHeader>
-        <DialogTitle className="text-lg">{name}</DialogTitle>
-        <DialogDescription>
-          {sourceTitle}
-          {meta ? ` · ${meta}` : ""}
-        </DialogDescription>
+      <DialogHeader className="pb-2 border-b">
+        <div className="flex items-start gap-3">
+          <div className={cn(
+            "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded",
+            isJail ? "bg-amber-100 text-amber-600" : "bg-indigo-100 text-indigo-600"
+          )}>
+            {isJail ? <Shield className="size-4" /> : <Scale className="size-4" />}
+          </div>
+          <div>
+            <DialogTitle className="text-lg font-bold">{name}</DialogTitle>
+            <DialogDescription className="flex items-center gap-2 mt-0.5">
+              <span>{sourceTitle}</span>
+              {meta && <><span aria-hidden>·</span><span>{meta}</span></>}
+              <Badge variant="outline" className={cn("ml-1 text-[10px]", tint(sourceId))}>
+                {isJail ? "Jail Record" : "Court Record"}
+              </Badge>
+            </DialogDescription>
+          </div>
+        </div>
       </DialogHeader>
 
-      <div className="flex gap-4">
+      <div className="flex gap-5 pt-1">
         {showPortrait && <PhotoSlot photo={photo} loading={loading} fetched={!!detail} size="lg" />}
 
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="text-sm font-medium">Charges</div>
-          {loading && charges.length === 0 && (
-            <p className="text-muted-foreground flex items-center gap-2 text-sm">
-              <Loader2 className="size-4 animate-spin" /> Loading details…
-            </p>
-          )}
-          {!loading && !error && charges.length === 0 && (
-            <p className="text-muted-foreground text-sm">No charges listed.</p>
-          )}
-          <ul className="space-y-1.5">
-            {charges.map((c, i) => (
-              <li key={i} className="flex flex-wrap items-center gap-1.5 text-sm">
-                <span>{c.offense ?? "—"}</span>
-                {c.disposition && (
-                  <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
-                    {c.disposition}
-                  </Badge>
-                )}
-                {c.case_no && <span className="text-muted-foreground text-xs">#{c.case_no}</span>}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-1 border-t pt-2">
-            <div className="text-muted-foreground mb-1 text-[11px] font-medium tracking-wide uppercase">
+        <div className="min-w-0 flex-1 space-y-4">
+          {/* Charges section */}
+          <div>
+            <div className="mb-2 flex items-center gap-2">
+              <FileText className="size-3.5 text-muted-foreground" />
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Charges
+              </span>
+            </div>
+            {loading && charges.length === 0 && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Loading details…
+              </p>
+            )}
+            {!loading && !error && charges.length === 0 && (
+              <p className="text-sm text-muted-foreground">No charges listed.</p>
+            )}
+            <ul className="space-y-2">
+              {charges.map((c, i) => {
+                const sev = chargeSeverity(c)
+                return (
+                  <li key={i} className="rounded border bg-muted/30 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {sev === "felony" && (
+                        <span className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
+                          Felony
+                        </span>
+                      )}
+                      {sev === "misdemeanor" && (
+                        <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                          Misdemeanor
+                        </span>
+                      )}
+                      <span className="text-sm font-semibold">{c.offense ?? "—"}</span>
+                    </div>
+                    {(c.disposition || c.case_no) && (
+                      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                        {c.disposition && <span>{c.disposition}</span>}
+                        {c.case_no && <span className="font-mono">#{c.case_no}</span>}
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+
+          {/* Source / link section */}
+          <div className="border-t pt-3">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
               Source
             </div>
             {deepLink ? (
@@ -732,7 +859,7 @@ function RecordDetail({
                 href={deepLink}
                 target="_blank"
                 rel="noreferrer"
-                className="text-primary inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+                className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
               >
                 Open this record on {sourceTitle} <ExternalLink className="size-3" />
               </a>
@@ -742,44 +869,43 @@ function RecordDetail({
                   href={portalUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-primary inline-flex items-center gap-1 underline-offset-4 hover:underline"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
                 >
-                  Open the {sourceTitle} portal <ExternalLink className="size-3" />
+                  Open {sourceTitle} portal <ExternalLink className="size-3" />
                 </a>
                 <p className="text-muted-foreground">
-                  This site opens a record only from within a live search
+                  This source requires a live session to deep-link
                   {caseRef ? (
-                    <>
-                      {" "}
-                      — look up <span className="text-foreground font-medium">#{caseRef}</span> there
-                    </>
-                  ) : null}
-                  .
+                    <> — search for <span className="font-mono font-medium text-foreground">#{caseRef}</span> there</>
+                  ) : null}.
                 </p>
               </div>
             ) : (
-              <p className="text-muted-foreground text-xs">No public link available for this source.</p>
+              <p className="text-xs text-muted-foreground">No public link available for this source.</p>
             )}
           </div>
         </div>
       </div>
 
       {error && !detail && (
-        <div className="mt-1 flex flex-wrap items-center gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm">
-          <span className="text-red-700">
-            Couldn't load the full record — the source site is slow or didn't respond.
+        <div className="mt-2 flex flex-wrap items-center gap-3 rounded border border-red-200 bg-red-50 p-3 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-red-500" />
+          <span className="text-red-700 flex-1">
+            Couldn't load the full record — the source site didn't respond.
           </span>
           <Button variant="outline" size="sm" className="h-7" onClick={onRetry}>
             Retry
           </Button>
         </div>
       )}
+
       {loading && !sheet && !hasPhotos && (
-        <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" /> Fetching the court case sheet…
-          <span className="text-xs">(the source site is slow — this can take 10–15s)</span>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Fetching case sheet from source…
+          <span className="text-xs">(can take 10–15s)</span>
         </div>
       )}
+
       {sheet && <CaseSheet text={sheet} source={rec.source} sourceTitle={sourceTitle} />}
     </>
   )
@@ -788,7 +914,8 @@ function RecordDetail({
 const CASE_SHEET_HEADERS: Record<string, string> = {
   dallas: "Dallas County · Felony & Misdemeanor Courts · Case Information",
   odcr: "Oklahoma · On Demand Court Records · Case Record",
-  denton: "Denton County · Tyler Public Access · Case Detail",
+  denton: "Denton County · Tyler Public Access · JP & County Criminal",
+  denton_dc: "Denton County · Tyler Public Access · District Court",
 }
 function CaseSheet({
   text,
@@ -802,14 +929,19 @@ function CaseSheet({
   const header = CASE_SHEET_HEADERS[source] ?? `${sourceTitle} · Case Record`
   const body = source === "dallas" ? text.replace(/^Dallas County[^\n]*\n/i, "") : text
   return (
-    <div className="mt-1">
-      <div className="mb-1 text-sm font-medium">Court case sheet</div>
-      <div className="overflow-hidden rounded-md border border-zinc-300 shadow-sm">
-        <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide text-zinc-700 uppercase">
+    <div className="mt-3">
+      <div className="mb-1.5 flex items-center gap-2">
+        <FileText className="size-3.5 text-muted-foreground" />
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Court Case Sheet
+        </span>
+      </div>
+      <div className="overflow-hidden rounded border border-slate-200 shadow-sm">
+        <div className="border-b border-slate-200 bg-slate-100 px-3 py-1.5 text-center text-[10px] font-semibold uppercase tracking-widest text-slate-600">
           {header}
         </div>
         <pre
-          className="max-h-[60vh] overflow-auto bg-[#fcfbf6] px-4 py-3 text-[11px] leading-[1.5] whitespace-pre text-zinc-800"
+          className="max-h-[55vh] overflow-auto bg-[#fafaf8] px-4 py-3 text-[11px] leading-relaxed whitespace-pre text-slate-700"
           style={{ fontFamily: '"Courier New", Courier, ui-monospace, monospace' }}
         >
           {body}
@@ -830,7 +962,7 @@ function sortRows(rows: Row[], sort: Sort, order: Record<string, number>): Row[]
     const ya = yr(a)
     const yb = yr(b)
     if (ya == null && yb == null) return 0
-    if (ya == null) return 1 // nulls last
+    if (ya == null) return 1
     if (yb == null) return -1
     return dir === "desc" ? yb - ya : ya - yb
   }
@@ -840,6 +972,6 @@ function sortRows(rows: Row[], sort: Sort, order: Record<string, number>): Row[]
   else if (sort === "year_desc") arr.sort((a, b) => byYear(a, b, "desc") || byName(a, b))
   else if (sort === "year_asc") arr.sort((a, b) => byYear(a, b, "asc") || byName(a, b))
   else if (sort === "source") arr.sort((a, b) => bySource(a, b) || byName(a, b))
-  else arr.sort((a, b) => rank(a) - rank(b) || bySource(a, b) || byName(a, b)) // relevance
+  else arr.sort((a, b) => rank(a) - rank(b) || bySource(a, b) || byName(a, b))
   return arr
 }

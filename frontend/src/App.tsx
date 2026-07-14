@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
-import { Loader2, Search, ShieldCheck, X } from "lucide-react"
+import { AlertTriangle, Loader2, Search, ShieldCheck, X } from "lucide-react"
 import type { AdapterResult } from "@/api/types"
 import { search } from "@/api/search"
 import { Results, type SourceMeta } from "@/components/Results"
@@ -16,8 +16,6 @@ export default function App() {
   const [first, setFirst] = useState("")
   const abortRef = useRef<AbortController | null>(null)
 
-  // Discover the enabled sources (with display name + photo capability) so we can render a card
-  // per source up front — no per-county knowledge baked into the UI.
   useEffect(() => {
     fetch("/api/health")
       .then((r) => r.json())
@@ -35,8 +33,6 @@ export default function App() {
     setResults({})
     setSubmitted({ last: lastName, first: first.trim() })
     setSearching(true)
-    // Ignore callbacks from a search that's been superseded by a newer one (its abort can resolve
-    // late) — only the active controller may touch results/searching state.
     const active = () => abortRef.current === ac
     await search(
       { last: lastName, first: first.trim() || undefined, max_results: 25 },
@@ -72,106 +68,118 @@ export default function App() {
   const queryLabel = submitted ? [submitted.last, submitted.first].filter(Boolean).join(", ") : ""
 
   return (
-    <div className="bg-muted/30 min-h-screen">
-      <header className="bg-background border-b">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-4">
-          <div className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-lg">
-            <ShieldCheck className="size-5" />
-          </div>
+    <div className="min-h-screen" style={{ background: "var(--background)" }}>
+      {/* Header */}
+      <header className="bg-primary text-primary-foreground shadow-md">
+        <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
+          <ShieldCheck className="size-6 shrink-0 opacity-90" />
           <div className="min-w-0">
-            <h1 className="font-heading text-lg leading-tight font-semibold">Background Search</h1>
-            <p className="text-muted-foreground text-xs">The Samaritan Inn · intake</p>
+            <h1 className="text-sm font-semibold leading-tight tracking-wide uppercase">
+              Criminal Background Search
+            </h1>
+            <p className="text-[11px] opacity-50 leading-none mt-0.5">
+              The Samaritan Inn · Intake · Confidential
+            </p>
           </div>
           {sources.length > 0 && (
-            <div className="text-muted-foreground ml-auto hidden text-xs sm:block">
-              {sources.length} public records {sources.length === 1 ? "source" : "sources"}
+            <div className="ml-auto flex items-center gap-1.5 text-xs opacity-60 shrink-0">
+              <span>{sources.length} sources</span>
             </div>
           )}
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6">
-        <form
-          onSubmit={onSubmit}
-          className="bg-background ring-foreground/5 rounded-xl border p-4 shadow-sm ring-1"
-        >
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="grid grow basis-40 gap-1.5">
-              <label htmlFor="last" className="text-xs font-medium">
-                Last name
-              </label>
-              <Input
-                id="last"
-                value={last}
-                onChange={(e) => setLast(e.target.value)}
-                placeholder="Smith"
-                autoFocus
-                autoComplete="off"
-              />
-            </div>
-            <div className="grid grow basis-40 gap-1.5">
-              <label htmlFor="first" className="text-xs font-medium">
-                First name <span className="text-muted-foreground">(optional)</span>
-              </label>
-              <Input
-                id="first"
-                value={first}
-                onChange={(e) => setFirst(e.target.value)}
-                placeholder="John"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" disabled={!last.trim() || searching} className="min-w-28">
-                {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-                {searching ? "Searching…" : "Search"}
-              </Button>
-              {(hasQuery || last || first) && (
-                <Button type="button" variant="ghost" onClick={clearSearch}>
-                  <X className="size-4" /> Clear
-                </Button>
-              )}
-            </div>
+        {/* Search form */}
+        <div className="bg-card rounded-lg border shadow-sm">
+          <div className="border-b px-4 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Subject Name Search
+            </p>
           </div>
-          <p className="text-muted-foreground mt-2.5 text-xs">
-            Searches public Texas &amp; Oklahoma court and jail records by name — all sources at
-            once. Results are <strong className="text-foreground/80">possible matches</strong> for a
-            person to review.
-          </p>
-        </form>
+          <form onSubmit={onSubmit} className="px-4 py-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="grid grow basis-44 gap-1.5">
+                <label htmlFor="last" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Last Name
+                </label>
+                <Input
+                  id="last"
+                  value={last}
+                  onChange={(e) => setLast(e.target.value)}
+                  placeholder="e.g. Smith"
+                  autoFocus
+                  autoComplete="off"
+                  className="font-medium"
+                />
+              </div>
+              <div className="grid grow basis-44 gap-1.5">
+                <label htmlFor="first" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  First Name <span className="normal-case font-normal">(optional)</span>
+                </label>
+                <Input
+                  id="first"
+                  value={first}
+                  onChange={(e) => setFirst(e.target.value)}
+                  placeholder="e.g. John"
+                  autoComplete="off"
+                  className="font-medium"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={!last.trim() || searching} className="min-w-32 gap-2">
+                  {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                  {searching ? "Searching…" : "Run Check"}
+                </Button>
+                {(hasQuery || last || first) && (
+                  <Button type="button" variant="ghost" onClick={clearSearch} className="gap-1">
+                    <X className="size-4" /> Clear
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
+              Searches public Texas &amp; Oklahoma court and jail records simultaneously across{" "}
+              {sources.length > 0 ? sources.length : "all"} sources.{" "}
+              <strong className="text-foreground/70">Results are possible matches</strong> — confirm
+              identity before acting.
+            </p>
+          </form>
+        </div>
 
         {healthError && (
-          <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            Couldn't reach the search server. Make sure the backend is running, then reload.
+          <div className="mt-4 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+            <AlertTriangle className="size-4 shrink-0" />
+            Cannot reach the search server. Make sure the backend is running, then reload.
           </div>
         )}
 
+        {/* Results summary bar */}
         {hasQuery && (
-          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <div>
-              Results for <span className="font-semibold">{queryLabel}</span>
+          <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <div className="text-sm font-semibold">
+              {queryLabel}
             </div>
-            <div className="text-muted-foreground flex items-center gap-1.5">
+            <div className="text-muted-foreground flex items-center gap-1.5 text-sm">
               {searching && <Loader2 className="size-3.5 animate-spin" />}
-              <span>
-                {summary.responded}/{sources.length} sources
-              </span>
+              <span>{summary.responded}/{sources.length} sources</span>
               <span aria-hidden>·</span>
               <span>
-                <span className="text-foreground font-medium">
+                <span className="font-semibold text-foreground">
                   {summary.totalRecords.toLocaleString()}
                 </span>{" "}
-                {searching ? "matches so far" : "possible matches"}
+                {searching ? "records so far" : "possible matches"}
               </span>
               {!searching && summary.elapsed > 0 && (
                 <>
                   <span aria-hidden>·</span>
-                  <span>{(summary.elapsed / 1000).toFixed(1)} s</span>
+                  <span>{(summary.elapsed / 1000).toFixed(1)}s</span>
                 </>
               )}
             </div>
             {!searching && summary.problems > 0 && (
-              <span className="text-amber-700">
+              <span className="flex items-center gap-1 text-sm text-amber-700">
+                <AlertTriangle className="size-3.5" />
                 {summary.problems} source{summary.problems === 1 ? "" : "s"} unavailable
               </span>
             )}
@@ -182,16 +190,17 @@ export default function App() {
           <Results sources={sources} results={results} searching={searching} />
         )}
 
+        {/* Pre-search empty state */}
         {!hasQuery && sources.length > 0 && (
-          <div className="mt-8 text-center">
-            <p className="text-muted-foreground text-sm">
-              Enter a last name above to search all {sources.length} sources at once.
+          <div className="mt-10 text-center">
+            <p className="text-sm text-muted-foreground">
+              Enter a subject's last name above to search all {sources.length} sources simultaneously.
             </p>
-            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
               {sources.map((s) => (
                 <span
                   key={s.id}
-                  className="text-muted-foreground bg-background inline-flex items-center rounded-full border px-2.5 py-1 text-xs"
+                  className="inline-flex items-center rounded border bg-card px-2.5 py-1 text-[11px] text-muted-foreground"
                 >
                   {s.display_name}
                 </span>
@@ -199,16 +208,18 @@ export default function App() {
             </div>
           </div>
         )}
+
         {sources.length === 0 && !healthError && (
-          <p className="text-muted-foreground mt-6 text-center text-sm">Loading sources…</p>
+          <p className="mt-6 text-center text-sm text-muted-foreground">Connecting to sources…</p>
         )}
       </main>
 
       <footer className="mx-auto max-w-5xl px-4 pb-10">
-        <div className="text-muted-foreground border-t pt-4 text-xs">
-          Results are <strong className="text-foreground">possible matches</strong> for a person to
-          review — never an automated decision. Confirm identity against more than a name before
-          acting.
+        <div className="border-t pt-4 text-[11px] text-muted-foreground leading-relaxed">
+          <strong className="text-foreground/70">IMPORTANT:</strong> All results are{" "}
+          <strong className="text-foreground/70">possible matches</strong> and require human review
+          for identity confirmation — never an automated decision. Confirm identity against more than a
+          name before acting.
         </div>
       </footer>
     </div>
