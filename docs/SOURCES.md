@@ -34,7 +34,8 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
 | **Dallas County, TX** | Criminal Background Search (HTML form POSTs) | 2 | http | none | — | 🟢 proven | **done** |
 | **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | reCAPTCHA v3 (invisible, non-blocking) | — | 🟢 proven (1000 results) | **done** |
-| **Denton County, TX** | Tyler Public Access, *self-hosted* (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
+| **Denton County, TX** (JP & County Criminal) | Tyler Public Access `/PublicAccess/` (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
+| **Denton County, TX** (District Court felonies) | Tyler Public Access `/PublicAccessDC/` (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
 | **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes with stealth, today) | ✅ mugshots | 🟢 proven | **done** |
 | **Fannin County, TX** | Vendor jail site (`offenderindex.com/fannincoga`) | 3–4 | http or browser | **client-side** CAPTCHA (defeatable within rules) | TBD | 🟡 reachable, unproven | todo |
 
@@ -73,8 +74,9 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
   (`adapters/denton.py`).** The list gives name + **birth date** (we keep the year only),
   charge, disposition, court, case#, and a `CaseDetail.aspx?CaseID=` deep link (drives
   `fetch_detail` → Register of Actions). No mugshots. Full detail:
-  `backend/tests/fixtures/denton/README.md`. Worth adding later: the **District Court**
-  module (`../PublicAccessDC/Search.aspx?ID=200`) for felonies.
+  `backend/tests/fixtures/denton/README.md`. The **District Court** felony module
+  (`/PublicAccessDC/Search.aspx?ID=100`) is live as `adapters/denton_dc.py`; both
+  adapters use `_isolated_client()` so their `ASP.NET_SessionId` cookies don't collide.
 - **Collin** — Genuinely browser-only (Blazor Server over SignalR; no REST/JSON
   exists — confirmed historically by a 411 on the negotiate endpoint). This is the
   one source that forces the on-prem-with-browser decision.
