@@ -64,6 +64,7 @@ class DentonDCAdapter(Adapter):
     has_photos = False
     timeout_s = 45.0
     RESULT_CAP = 400
+    portal_url = "https://justice1.dentoncounty.gov/PublicAccessDC/Search.aspx?ID=100"
 
     async def search(self, query: SearchQuery, ctx: AdapterContext) -> AdapterResult:
         start = ctx.now_ms()
@@ -125,7 +126,7 @@ class DentonDCAdapter(Adapter):
                 return None
             return InmateRecord(
                 source=self.id,
-                source_url=f"{_HOST}/CaseDetail.aspx?CaseID={record_id}",
+                source_url=None,  # session-gated; portal_url is the fallback
                 name="",
                 matched_on=[MatchInfo(type=MatchType.NAME)],
                 charges=d["charges"],
@@ -183,7 +184,7 @@ class DentonDCAdapter(Adapter):
             out.append(
                 InmateRecord(
                     source=self.id,
-                    source_url=f"{_HOST}/CaseDetail.aspx?CaseID={case_id}" if case_id else None,
+                    source_url=None,  # CaseDetail.aspx is session-gated; portal_url is the fallback
                     name=name,
                     year_of_birth=year,
                     sex=None,

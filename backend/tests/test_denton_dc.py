@@ -84,7 +84,7 @@ def test_field_mapping_first_record():
     r = adapter._parse_results(_RESULTS_HTML.decode())[0]
     assert r.name == "Smith, John Allen"
     assert r.year_of_birth == "1985"
-    assert r.source_url == f"{_HOST}/CaseDetail.aspx?CaseID=111111"
+    assert r.source_url is None  # CaseDetail.aspx is session-gated; portal_url is the fallback
     assert r.raw["detail_id"] == "111111"
     assert r.raw["case_no"] == "F22-1234-158"
     assert [(m.type, m.detail) for m in r.matched_on] == [(MatchType.NAME, "Defendant")]
