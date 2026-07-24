@@ -147,6 +147,17 @@ export default function App() {
           </form>
         </div>
 
+        {/* Disclaimer */}
+        <div className="mt-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <AlertTriangle className="mt-px size-4 shrink-0 text-amber-500" />
+          <p className="leading-relaxed">
+            <span className="font-semibold">For review purposes only.</span> These results are
+            aggregated from public county sources and may be incomplete, outdated, or refer to a
+            different individual with the same name. All matches must be independently verified
+            against the official website of the relevant county before any decision is made.
+          </p>
+        </div>
+
         {healthError && (
           <div className="mt-4 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
             <AlertTriangle className="size-4 shrink-0" />
