@@ -193,7 +193,7 @@ export function Results({
         !off.has(source.id) &&
         (sex === "all" || rec.sex === sex) &&
         (!photoOnly || source.has_photos) &&
-        (minYear == null || (rec.year_of_birth ? Number(rec.year_of_birth) >= minYear : false)),
+        (minYear == null || Number(rec.year_of_birth) === minYear),
     )
     return sortRows(rows, sort, order)
   }, [merged, off, sex, photoOnly, minYear, sort, order])
@@ -317,7 +317,7 @@ export function Results({
           />
 
           <label className="flex items-center gap-1 rounded border border-input px-1.5 py-1">
-            <span className="text-[10px] uppercase tracking-wide font-semibold">Born ≥</span>
+            <span className="text-[10px] uppercase tracking-wide font-semibold">Born</span>
             <input
               type="number"
               inputMode="numeric"
