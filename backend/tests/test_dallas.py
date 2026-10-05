@@ -13,6 +13,9 @@ from adapters.base import AdapterContext, AdapterStatus, MatchType, SearchQuery
 from adapters.dallas import DallasAdapter
 
 FIX = Path(__file__).parent / "fixtures" / "dallas"
+if not (FIX / "search_lastname-smith_multi.html").exists():
+    # Captured fixtures hold real PII and are git-ignored, so a fresh clone has none.
+    pytest.skip("captured fixtures not present (git-ignored, contain PII)", allow_module_level=True)
 RESULTS = (FIX / "search_lastname-smith_multi.html").read_bytes()
 NONE = (FIX / "search_no-results.html").read_bytes()
 PAGE1 = (FIX / "search_smith_page1.html").read_bytes()

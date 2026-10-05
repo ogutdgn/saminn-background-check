@@ -36,7 +36,10 @@ REGISTRY: list[RegistryEntry] = [
     RegistryEntry(OdcrAdapter(), enabled=True),      # Stage 4 — live (statewide OK; pagination + cap handled)
     RegistryEntry(HuntAdapter(), enabled=True),      # Stage 4 — live (current-custody roster; client-side surname filter)
     RegistryEntry(DentonAdapter(), enabled=True),    # Stage 4 — live (Tier-3 Tyler Public Access; stateful VIEWSTATE)
-    RegistryEntry(CollinAdapter(), enabled=True),    # Stage 4 — live (Tier-4 Blazor/SignalR; Playwright browser)
+    # Collin: DISABLED. Its Incapsula bot-protection is only passed via playwright-stealth
+    # fingerprint patching — WAF evasion, which responsible-use rule 3 forbids (docs/ARCHITECTURE.md).
+    # Out of scope until a legitimate public door (or county permission) exists.
+    RegistryEntry(CollinAdapter(), enabled=False),
     RegistryEntry(DentonDCAdapter(), enabled=True),  # Stage 4 — live (Tier-3 Tyler PublicAccessDC; District Court felonies)
 ]
 

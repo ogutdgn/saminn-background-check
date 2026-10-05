@@ -14,6 +14,9 @@ from adapters.base import AdapterContext, AdapterStatus, MatchType, SearchQuery
 from adapters.denton import DentonAdapter
 
 FIX = Path(__file__).parent / "fixtures" / "denton"
+if not (FIX / "00_search_form_ID100.html").exists():
+    # Captured fixtures hold real PII and are git-ignored, so a fresh clone has none.
+    pytest.skip("captured fixtures not present (git-ignored, contain PII)", allow_module_level=True)
 FORM = (FIX / "00_search_form_ID100.html").read_bytes()           # stands in for the node-aware form
 MULTI = (FIX / "results_smith_multi.html").read_bytes()           # 400 records
 NONE = (FIX / "results_no-results.html").read_bytes()             # 0 records

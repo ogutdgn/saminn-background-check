@@ -14,6 +14,9 @@ from adapters.base import AdapterContext, AdapterStatus, MatchType, SearchQuery
 from adapters.odcr import OdcrAdapter
 
 FIX = Path(__file__).parent / "fixtures" / "odcr"
+if not (FIX / "search_smithjohn_page1.html").exists():
+    # Captured fixtures hold real PII and are git-ignored, so a fresh clone has none.
+    pytest.skip("captured fixtures not present (git-ignored, contain PII)", allow_module_level=True)
 PAGE1 = (FIX / "search_smithjohn_page1.html").read_bytes()
 PAGE2 = (FIX / "search_smithjohn_page2.html").read_bytes()
 NONE = (FIX / "search_no-results.html").read_bytes()
