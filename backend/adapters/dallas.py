@@ -44,6 +44,7 @@ class DallasAdapter(Adapter):
     display_name = "Dallas County"
     transport = "http"
     tier = 2
+    timeout_s = 45.0   # a common surname pages through ~19 s of results; the 20 s default cut it off
     # Session-relative detail (POST /searchByCase) -> no per-record deep link; the UI links here +
     # shows the case number to look up.
     portal_url = "https://www.dallascounty.org/criminalBackgroundSearch/"

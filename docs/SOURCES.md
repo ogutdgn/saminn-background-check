@@ -33,7 +33,7 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
 | **Tarrant County, TX** | Sheriff inmate roster JSON API (`inmatesearch.tarrantcounty.com`) | 1 | http | none | ✅ mugshots | 🟢 proven | **done** |
 | **Dallas County, TX** | Criminal Background Search (HTML form POSTs) | 2 | http | none | — | 🟢 proven | **done** |
 | **Hunt County, TX** | Sheriff jail booking (`apps.huntcounty.net/jail/`, Classic ASP) | 2 | http | none | ✅ mugshots | 🟢 proven | **done** |
-| **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | reCAPTCHA v3 (invisible, non-blocking) | — | 🟢 proven (1000 results) | **done** |
+| **Oklahoma (statewide)** | ODCR (`odcr.com`) — covers 70+ OK counties, HTML POST | 2 | http | Cloudflare block for automated requests (since Oct 2026) | — | 🔴 disabled (rule 3) | built, **disabled** |
 | **Denton County, TX** (JP & County Criminal) | Tyler Public Access `/PublicAccess/` (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
 | **Denton County, TX** (District Court felonies) | Tyler Public Access `/PublicAccessDC/` (`justice1.dentoncounty.gov`) | 3 | http | Cloudflare (passes this IP) | — | 🟢 proven (400 results) | **done** |
 | **Collin County, TX** | Judicial Online Search (MudBlazor / SignalR) | 4 | browser | Incapsula (passes only with stealth patching) | ✅ mugshots | 🔴 disabled (rule 3) | built, **disabled** |
@@ -51,7 +51,9 @@ Legend: 🟢 proven reachable · 🟡 reachable, needs effort / unproven end-to-
   (`booking.asp`, POST `partyID`/`jailingID`/`releaseDate`) yields **mugshot + charges +
   personal details**, pulled lazily via `fetch_detail` (Hunt is an image source like
   Tarrant). No DOB anywhere. Spike notes: `backend/tests/fixtures/hunt/README.md`.
-- **Oklahoma / ODCR** — OSCN (the state docket site) is Tier-5 Cloudflare-Turnstile
+- **Oklahoma / ODCR** — **Disabled (2026-10-05):** odcr.com now returns a Cloudflare 403
+  block page to automated requests (browsers still pass), so it is out of scope under rule 3.
+  Previously: OSCN (the state docket site) is Tier-5 Cloudflare-Turnstile
   blocked. **ODCR is the parallel system and it's open.** It covers most OK counties
   in one adapter, which makes it high-value. Best practice is to search both OSCN
   and ODCR; we use the open one. **Live (`adapters/odcr.py`).** Flow: GET `/` (cookie)
