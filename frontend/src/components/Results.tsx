@@ -90,22 +90,8 @@ const SOURCE_TINT: Record<string, string> = {
   collin: "border-emerald-200 bg-emerald-50 text-emerald-700",
 }
 
-// Left border color for rows: amber for jail, indigo for court
-const ROW_BORDER: Record<string, string> = {
-  tarrant: "border-l-amber-400",
-  hunt: "border-l-amber-400",
-  dallas: "border-l-indigo-400",
-  denton: "border-l-indigo-400",
-  denton_dc: "border-l-indigo-500",
-  odcr: "border-l-sky-400",
-  collin: "border-l-indigo-400",
-}
-
 function tint(id: string) {
   return SOURCE_TINT[id] ?? "border-zinc-200 bg-zinc-50 text-zinc-600"
-}
-function rowBorder(id: string) {
-  return ROW_BORDER[id] ?? "border-l-slate-300"
 }
 function shortName(s: SourceMeta) {
   return SOURCE_SHORT[s.id] ?? s.display_name
