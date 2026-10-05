@@ -14,6 +14,9 @@ from adapters.base import AdapterContext, AdapterStatus, MatchType, SearchQuery
 from adapters.tarrant import TarrantAdapter
 
 FIX = Path(__file__).parent / "fixtures" / "tarrant"
+if not (FIX / "search_lastname-smith_multi.json").exists():
+    # Captured fixtures hold real PII and are git-ignored, so a fresh clone has none.
+    pytest.skip("captured fixtures not present (git-ignored, contain PII)", allow_module_level=True)
 LIST_MULTI = (FIX / "search_lastname-smith_multi.json").read_bytes()
 LIST_NONE = (FIX / "search_no-results.json").read_bytes()
 BOOKINGS = (FIX / "bookings_cid-1042590.json").read_bytes()

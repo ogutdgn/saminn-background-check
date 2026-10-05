@@ -16,6 +16,9 @@ from adapters.hunt import HuntAdapter
 from selectolax.parser import HTMLParser
 
 FIX = Path(__file__).parent / "fixtures" / "hunt"
+if not (FIX / "roster_current.html").exists():
+    # Captured fixtures hold real PII and are git-ignored, so a fresh clone has none.
+    pytest.skip("captured fixtures not present (git-ignored, contain PII)", allow_module_level=True)
 REAL_ROSTER = (FIX / "roster_current.html").read_bytes()
 REAL_BOOKING = (FIX / "booking_174728.html").read_bytes()
 
