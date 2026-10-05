@@ -139,7 +139,7 @@ export default function App() {
               </div>
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
-              Searches public Texas &amp; Oklahoma court and jail records simultaneously across{" "}
+              Searches public court and jail records simultaneously across{" "}
               {sources.length > 0 ? sources.length : "all"} sources.{" "}
               <strong className="text-foreground/70">Results are possible matches</strong> — confirm
               identity before acting.

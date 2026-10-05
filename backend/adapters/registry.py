@@ -33,7 +33,10 @@ class RegistryEntry:
 REGISTRY: list[RegistryEntry] = [
     RegistryEntry(TarrantAdapter(), enabled=True),   # Stage 4 — live
     RegistryEntry(DallasAdapter(), enabled=True),    # Stage 4 — live (pagination handled)
-    RegistryEntry(OdcrAdapter(), enabled=True),      # Stage 4 — live (statewide OK; pagination + cap handled)
+    # ODCR: DISABLED (2026-10-05). odcr.com now answers automated requests with a Cloudflare
+    # block page (403 "Sorry, you have been blocked") while real browsers pass — getting around
+    # it would break responsible-use rule 3. Re-enable only if plain requests work again.
+    RegistryEntry(OdcrAdapter(), enabled=False),
     RegistryEntry(HuntAdapter(), enabled=True),      # Stage 4 — live (current-custody roster; client-side surname filter)
     RegistryEntry(DentonAdapter(), enabled=True),    # Stage 4 — live (Tier-3 Tyler Public Access; stateful VIEWSTATE)
     # Collin: DISABLED. Its Incapsula bot-protection is only passed via playwright-stealth
